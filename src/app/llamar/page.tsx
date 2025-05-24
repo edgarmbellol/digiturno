@@ -1,105 +1,127 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone } from "lucide-react";
-import type { Turn } from '@/components/turn-form'; // Import Turn type
-
-const CURRENT_TURN_KEY = 'turnoFacil_currentTurn';
-const PENDING_TURNS_KEY = 'turnoFacil_pendingTurns';
-
-// Define a type for the turn being displayed
-interface DisplayTurn extends Turn {
-  module: string; // Add module to the display turn
-}
+import { Megaphone, Hourglass } from "lucide-react";
+import type { Turn } from '@/types/turn'; // Import Turn type from new location
+import { db } from "@/lib/firebase";
+import { collection, query, where, orderBy, onSnapshot, limit, Timestamp } from "firebase/firestore";
+import { useToast } from "@/hooks/use-toast";
 
 // Default empty turn for display when nothing is called
-const defaultCurrentTurn: DisplayTurn = {
+const defaultCurrentTurn: Turn = {
   id: "---",
+  turnNumber: "---",
   service: "Esperando llamada...",
   patientId: "",
   priority: false,
-  requestedAt: new Date(),
+  requestedAt: new Timestamp(0,0), // Placeholder, will be updated
+  status: 'pending', // or some initial status
   module: "---",
+  calledAt: new Timestamp(0,0)
 };
 
 export default function CallPatientPage() {
-  const [currentTurn, setCurrentTurn] = useState<DisplayTurn>(defaultCurrentTurn);
-  const [upcomingTurns, setUpcomingTurns] = useState<Pick<Turn, 'id' | 'service'>[]>([]);
+  const [currentTurn, setCurrentTurn] = useState<Turn>(defaultCurrentTurn);
+  const [upcomingTurns, setUpcomingTurns] = useState<Turn[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const { toast } = useToast();
+  const prevTurnNumberRef = useRef<string | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    const loadDataFromLocalStorage = () => {
-      try {
-        const storedCurrentTurn = localStorage.getItem(CURRENT_TURN_KEY);
-        if (storedCurrentTurn) {
-          const parsedTurn: Turn = JSON.parse(storedCurrentTurn);
-           // Ensure requestedAt is a Date object
-          if (parsedTurn.requestedAt) {
-            parsedTurn.requestedAt = new Date(parsedTurn.requestedAt);
-          }
-          setCurrentTurn({ ...parsedTurn, module: "Módulo Asignado" }); // Assign a module
-        } else {
-          setCurrentTurn(defaultCurrentTurn);
-        }
-
-        const storedPendingTurns = localStorage.getItem(PENDING_TURNS_KEY);
-        if (storedPendingTurns) {
-          const parsedPending: Turn[] = JSON.parse(storedPendingTurns).map((t: any) => ({
-            ...t,
-            requestedAt: new Date(t.requestedAt)
-          }));
-          // Sort pending turns: priority first, then by requestedAt
-          const sortedPending = parsedPending.sort((a, b) => {
-            if (a.priority && !b.priority) return -1;
-            if (!a.priority && b.priority) return 1;
-            return a.requestedAt.getTime() - b.requestedAt.getTime();
-          });
-          setUpcomingTurns(sortedPending.slice(0, 3).map(turn => ({ id: turn.id, service: turn.service })));
-        } else {
-          setUpcomingTurns([]);
-        }
-      } catch (error) {
-        console.error("Error loading from localStorage:", error);
-        setCurrentTurn(defaultCurrentTurn);
-        setUpcomingTurns([]);
+    // Initialize AudioContext on user interaction (or attempt)
+    // Browsers often block audio until user interaction
+    const initAudioContext = () => {
+      if (!audioContextRef.current && typeof window !== "undefined") {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
     };
+    // Call it once, e.g. after a delay or on a button click if needed. For now, auto-init.
+    initAudioContext();
 
-    loadDataFromLocalStorage(); // Load on initial render
 
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === CURRENT_TURN_KEY || event.key === PENDING_TURNS_KEY) {
-        loadDataFromLocalStorage();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-
-    // Sound effect for new turn - only if turn changes from '---' or a different ID
-    if (currentTurn.id !== "---" && currentTurn.id !== defaultCurrentTurn.id) {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        if (audioContext) {
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
+    // Listener for the currently called turn
+    const qCalled = query(
+      collection(db, "turns"),
+      where("status", "==", "called"),
+      orderBy("calledAt", "desc"),
+      limit(1)
+    );
+    const unsubscribeCalled = onSnapshot(qCalled, (querySnapshot) => {
+      if (!querySnapshot.empty) {
+        const calledDoc = querySnapshot.docs[0];
+        const newCalledTurn = { id: calledDoc.id, ...calledDoc.data() } as Turn;
+        
+        // Play sound only if the turn number changes to a new, valid turn
+        if (newCalledTurn.turnNumber && newCalledTurn.turnNumber !== "---" && newCalledTurn.turnNumber !== prevTurnNumberRef.current) {
+           if (audioContextRef.current) {
+            const oscillator = audioContextRef.current.createOscillator();
+            const gainNode = audioContextRef.current.createGain();
             
             oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
+            gainNode.connect(audioContextRef.current.destination);
             
-            oscillator.type = 'sine'; // sine, square, sawtooth, triangle
-            oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4 note
-            gainNode.gain.setValueAtTime(0.1, audioContext.currentTime); // Volume
+            oscillator.type = 'sine'; 
+            oscillator.frequency.setValueAtTime(523.25, audioContextRef.current.currentTime); // C5 note
+            gainNode.gain.setValueAtTime(0.1, audioContextRef.current.currentTime); 
 
             oscillator.start();
-            oscillator.stop(audioContext.currentTime + 0.3); // Play for 0.3 seconds
+            oscillator.stop(audioContextRef.current.currentTime + 0.3); 
+          }
         }
-    }
+        prevTurnNumberRef.current = newCalledTurn.turnNumber;
+        setCurrentTurn(newCalledTurn);
 
+      } else {
+        setCurrentTurn(defaultCurrentTurn);
+        prevTurnNumberRef.current = null;
+      }
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error fetching called turn:", error);
+      toast({ title: "Error", description: "No se pudo cargar el turno actual.", variant: "destructive" });
+      setCurrentTurn(defaultCurrentTurn);
+      setIsLoading(false);
+    });
 
+    // Listener for upcoming turns
+    const qPending = query(
+      collection(db, "turns"),
+      where("status", "==", "pending"),
+      orderBy("priority", "desc"),
+      orderBy("requestedAt", "asc"),
+      limit(3) // Show next 3
+    );
+    const unsubscribePending = onSnapshot(qPending, (querySnapshot) => {
+      const turnsData: Turn[] = [];
+      querySnapshot.forEach((doc) => {
+        turnsData.push({ id: doc.id, ...doc.data() } as Turn);
+      });
+      setUpcomingTurns(turnsData);
+    }, (error) => {
+      console.error("Error fetching upcoming turns:", error);
+      // Optional: toast for upcoming turns error
+    });
+    
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
+      unsubscribeCalled();
+      unsubscribePending();
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        // audioContextRef.current.close(); // Uncomment if you want to close context on unmount
+      }
     };
-  }, [currentTurn.id]); // Re-run effect if currentTurn.id changes to play sound for new turn
+  }, [toast]);
+
+  if (isLoading) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 via-background to-background">
+        <Hourglass className="h-16 w-16 text-primary animate-spin" />
+        <p className="text-xl text-muted-foreground mt-4">Cargando pantalla de turnos...</p>
+      </main>
+    );
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-start p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 via-background to-background">
@@ -107,15 +129,15 @@ export default function CallPatientPage() {
         <CardHeader className="bg-primary text-primary-foreground p-6 rounded-t-lg">
           <div className="flex items-center justify-between">
             <CardTitle className="text-4xl sm:text-5xl font-bold">Turno Actual</CardTitle>
-            <Megaphone className="h-12 w-12 sm:h-16 sm:w-16 animate-pulse" />
+            <Megaphone className={`h-12 w-12 sm:h-16 sm:w-16 ${currentTurn.turnNumber !== '---' ? 'animate-pulse' : ''}`} />
           </div>
         </CardHeader>
         <CardContent className="p-6 sm:p-8 text-center">
-          <p className="text-6xl sm:text-8xl font-bold text-accent-foreground mb-2">{currentTurn.id}</p>
+          <p className="text-6xl sm:text-8xl font-bold text-accent-foreground mb-2">{currentTurn.turnNumber}</p>
           <p className="text-2xl sm:text-3xl text-muted-foreground mb-1">{currentTurn.service}</p>
-          {currentTurn.patientId && <p className="text-lg sm:text-xl text-muted-foreground mb-3">Paciente: {currentTurn.patientId}</p>}
+          {currentTurn.patientId && currentTurn.turnNumber !== '---' && <p className="text-lg sm:text-xl text-muted-foreground mb-3">Paciente: {currentTurn.patientId.substring(0, Math.min(currentTurn.patientId.length, currentTurn.patientId.length -3)) + 'XXX'}</p>}
           <p className="text-3xl sm:text-4xl font-semibold text-primary-foreground bg-primary/80 rounded-md py-3 px-6 inline-block shadow-md">
-            {currentTurn.module}
+            {currentTurn.module || "---"}
           </p>
         </CardContent>
       </Card>
@@ -129,8 +151,8 @@ export default function CallPatientPage() {
           {upcomingTurns.length > 0 ? (
             <ul className="space-y-3">
               {upcomingTurns.map((turn, index) => (
-                <li key={index} className="p-4 bg-secondary/50 rounded-lg shadow-sm flex justify-between items-center">
-                  <span className="text-xl sm:text-2xl font-medium text-secondary-foreground">{turn.id}</span>
+                <li key={turn.id} className="p-4 bg-secondary/50 rounded-lg shadow-sm flex justify-between items-center">
+                  <span className="text-xl sm:text-2xl font-medium text-secondary-foreground">{turn.turnNumber}</span>
                   <span className="text-base sm:text-lg text-muted-foreground">{turn.service}</span>
                 </li>
               ))}
@@ -147,5 +169,3 @@ export default function CallPatientPage() {
     </main>
   );
 }
-
-    
