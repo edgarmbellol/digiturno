@@ -1,3 +1,4 @@
+
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,6 +27,18 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Receipt, Stethoscope, HeartPulse, ShieldPlus, CheckCircle2, PartyPopper } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+const PENDING_TURNS_KEY = 'turnoFacil_pendingTurns';
+
+// Definimos el tipo Turn para consistencia
+export type Turn = {
+  id: string;
+  service: string;
+  patientId: string;
+  priority: boolean;
+  requestedAt: Date;
+};
+
+
 const services: { value: string; label: string; icon: LucideIcon }[] = [
   { value: "facturacion", label: "Facturación", icon: Receipt },
   { value: "citas_medicas", label: "Citas Médicas", icon: Stethoscope },
@@ -46,7 +59,7 @@ type FormValues = z.infer<typeof formSchema>;
 
 export default function TurnForm() {
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [submittedData, setSubmittedData] = useState<FormValues | null>(null);
+  const [submittedData, setSubmittedData] = useState<FormValues & { turnId?: string } | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -56,7 +69,7 @@ export default function TurnForm() {
       isSenior: false,
       isPregnant: false,
       isDisabled: false,
-      isNone: false,
+      isNone: true, // Default to Ninguna
     },
   });
 
@@ -81,16 +94,46 @@ export default function TurnForm() {
   }, [isSenior, isPregnant, isDisabled, setValue]);
 
   function onSubmit(data: FormValues) {
-    // In a real app, you'd send this data to a server
-    console.log(data);
-    setSubmittedData(data);
+    const selectedServiceInfo = services.find(s => s.value === data.service);
+    if (!selectedServiceInfo) {
+      // Should not happen if validation is correct
+      console.error("Servicio no encontrado");
+      return;
+    }
+
+    const newTurn: Turn = {
+      id: `${selectedServiceInfo.label.substring(0,1).toUpperCase()}-${Date.now().toString().slice(-5)}`,
+      service: selectedServiceInfo.label,
+      patientId: `CC ${data.idNumber}`, // Format as in professional page
+      priority: data.isSenior || data.isPregnant || data.isDisabled,
+      requestedAt: new Date(),
+    };
+
+    try {
+      const storedPendingTurns = localStorage.getItem(PENDING_TURNS_KEY);
+      let pendingTurns: Turn[] = storedPendingTurns ? JSON.parse(storedPendingTurns).map((t: any) => ({...t, requestedAt: new Date(t.requestedAt)})) : [];
+      pendingTurns.push(newTurn);
+      localStorage.setItem(PENDING_TURNS_KEY, JSON.stringify(pendingTurns));
+    } catch (error) {
+      console.error("Error saving to localStorage:", error);
+      // Handle error, maybe show a toast to the user
+    }
+    
+    setSubmittedData({...data, turnId: newTurn.id});
     setIsSubmitted(true);
   }
 
   function handleNewTurn() {
     setIsSubmitted(false);
     setSubmittedData(null);
-    reset();
+    reset({ // Reset with 'Ninguna' checked by default
+        service: "",
+        idNumber: "",
+        isSenior: false,
+        isPregnant: false,
+        isDisabled: false,
+        isNone: true,
+    });
   }
   
   const selectedServiceValue = watch("service");
@@ -107,7 +150,7 @@ export default function TurnForm() {
           </div>
           <CardTitle className="text-2xl font-bold">¡Turno Registrado!</CardTitle>
           <CardDescription className="text-muted-foreground">
-            Su solicitud ha sido procesada exitosamente.
+            Su turno <span className="font-semibold text-primary">{submittedData.turnId}</span> ha sido procesado exitosamente.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
@@ -210,9 +253,20 @@ export default function TurnForm() {
                             checked={field.value as boolean}
                             onCheckedChange={field.onChange}
                             aria-label={item.label}
+                            disabled={
+                                (item.name === "isSenior" && (isPregnant || isDisabled)) ||
+                                (item.name === "isPregnant" && (isSenior || isDisabled)) ||
+                                (item.name === "isDisabled" && (isSenior || isPregnant)) ||
+                                (item.name !== "isNone" && isNone)
+                            }
                           />
                         </FormControl>
-                        <FormLabel className="font-normal text-base m-0! cursor-pointer">
+                        <FormLabel className={`font-normal text-base m-0! cursor-pointer ${
+                            ((item.name === "isSenior" && (isPregnant || isDisabled)) ||
+                            (item.name === "isPregnant" && (isSenior || isDisabled)) ||
+                            (item.name === "isDisabled" && (isSenior || isPregnant)) ||
+                            (item.name !== "isNone" && isNone)) ? 'text-muted-foreground opacity-50 cursor-not-allowed' : ''
+                        }`}>
                           {item.label}
                         </FormLabel>
                       </FormItem>
@@ -233,3 +287,5 @@ export default function TurnForm() {
     </Card>
   );
 }
+
+    
