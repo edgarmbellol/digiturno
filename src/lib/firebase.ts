@@ -3,6 +3,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getAnalytics, type Analytics } from "firebase/analytics";
 import { getFirestore, type Firestore } from "firebase/firestore"; // Import getFirestore
+import { getAuth, type Auth } from "firebase/auth"; // Import Firebase Auth
 
 // TODO: Add SDKs for Firebase products that you want to use
 // https://firebase.google.com/docs/web/setup#available-libraries
@@ -13,7 +14,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyBeiitfAFn-csRbvzBdF15XO78o_f67T28",
   authDomain: "digiturno-hospital.firebaseapp.com",
   projectId: "digiturno-hospital",
-  storageBucket: "digiturno-hospital.firebasestorage.app", // Corrected from firebasestorage.app to appspot.com if that's the typical pattern, or confirm the actual bucket name. Assuming current is correct as provided by user.
+  storageBucket: "digiturno-hospital.appspot.com", 
   messagingSenderId: "1020330632521",
   appId: "1:1020330632521:web:bc712f75ae1b9043752698",
   measurementId: "G-JCHVG3QR07"
@@ -29,5 +30,9 @@ if (typeof window !== 'undefined') {
 // Initialize Firestore
 const db: Firestore = getFirestore(app);
 
-// Export Firebase app and Firestore instance
-export { app, db, analytics };
+// Initialize Firebase Auth
+const auth: Auth = getAuth(app);
+
+// Export Firebase app, Firestore instance, and Auth instance
+export { app, db, auth, analytics };
+
