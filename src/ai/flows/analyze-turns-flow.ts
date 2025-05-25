@@ -49,49 +49,51 @@ const analysisPrompt = ai.definePrompt({
   name: 'turnAnalysisPrompt',
   input: {schema: AnalyzeTurnsInputSchema},
   output: {schema: AnalyzeTurnsOutputSchema},
-  prompt: `You are an expert data analyst specializing in service queue management for hospitals.
-Analyze the following turn data for TurnoFacil system and provide a concise summary of key insights.
+  model: 'googleai/gemini-1.5-flash-latest', // Specify the model here
+  prompt: `Eres un analista de datos experto especializado en la gestión de colas de servicio para hospitales.
+Analiza los siguientes datos de turnos para el sistema TurnoFacil y proporciona un resumen conciso de las ideas clave.
 
-Focus on:
-- Service demand: Which services are most requested?
-- Wait times:
-    - Initial wait time (from 'requestedAt' to 'calledAt' for reception/professional services).
-    - Wait time for doctor (from 'completedAt' (reception) to 'calledAt' (by doctor), for turns that went to 'waiting_doctor' then 'called_by_doctor').
-- Processing times:
-    - Reception/Professional processing time (from 'calledAt' to 'completedAt' for services like Facturación).
-    - Doctor consultation time (from 'calledAt' (by doctor) to 'doctorCompletedAt').
-- Priority impact: Do priority turns significantly affect overall flow? Note any patterns.
-- Professional/Module activity: Briefly comment if any modules or professionals handle significantly more/less volume if data is available.
-- Potential bottlenecks or areas for improvement based on the data.
-- Overall efficiency observations.
+Enfócate en:
+- Demanda de servicios: ¿Qué servicios son los más solicitados?
+- Tiempos de espera:
+    - Tiempo de espera inicial (desde 'requestedAt' hasta 'calledAt' para servicios de recepción/profesionales).
+    - Tiempo de espera para el médico (desde 'completedAt' (recepción) hasta 'calledAt' (por el médico), para turnos que pasaron a 'waiting_doctor' y luego a 'called_by_doctor').
+- Tiempos de procesamiento:
+    - Tiempo de procesamiento en recepción/profesional (desde 'calledAt' hasta 'completedAt' para servicios como Facturación).
+    - Tiempo de consulta médica (desde 'calledAt' (por el médico) hasta 'doctorCompletedAt').
+- Impacto de la prioridad: ¿Los turnos prioritarios afectan significativamente el flujo general? Observa cualquier patrón.
+- Actividad de profesionales/módulos: Comenta brevemente si algún módulo o profesional maneja un volumen significativamente mayor/menor si los datos están disponibles.
+- Posibles cuellos de botella o áreas de mejora basadas en los datos.
+- Observaciones generales de eficiencia.
 
-Timestamps are provided as ISO date strings. Calculate durations based on these. Be mindful of missing timestamps, which mean that stage hasn't occurred or wasn't recorded for that turn.
-'requestedAt': Patient requested the turn.
-'calledAt': Turn called by reception/professional OR by a doctor. This timestamp is updated when a doctor calls a patient who was 'waiting_doctor'.
-'completedAt': Turn processed by reception/professional. If the service leads to a doctor, this marks the end of the reception phase (status might become 'waiting_doctor').
-'doctorCompletedAt': Consultation completed by the doctor.
+Las marcas de tiempo se proporcionan como cadenas de fecha ISO. Calcula las duraciones basándote en esto. Ten en cuenta las marcas de tiempo faltantes, lo que significa que esa etapa no ha ocurrido o no se registró para ese turno.
+'requestedAt': El paciente solicitó el turno.
+'calledAt': Turno llamado por recepción/profesional O por un médico. Esta marca de tiempo se actualiza cuando un médico llama a un paciente que estaba en 'waiting_doctor'.
+'completedAt': Turno procesado por recepción/profesional. Si el servicio conduce a un médico, esto marca el final de la fase de recepción (el estado podría convertirse en 'waiting_doctor').
+'doctorCompletedAt': Consulta completada por el médico.
 
-Provide your analysis in a clear, structured format. Use bullet points for key findings.
+Proporciona tu análisis en un formato claro y estructurado. Usa viñetas para los hallazgos clave.
+**IMPORTANTE: Todo el análisis y el texto de respuesta deben estar en español.**
 
-Turn Data:
+Datos de los Turnos:
 {{#if turns.length}}
 {{#each turns}}
-- Turn: {{turnNumber}}
-  Service: {{service}}
-  Priority: {{priority}}
-  Status: {{status}}
-  Requested At: {{#if requestedAt}}{{requestedAt}}{{else}}N/A{{/if}}
-  Called At: {{#if calledAt}}{{calledAt}}{{else}}N/A{{/if}}
-  Reception Completed At: {{#if completedAt}}{{completedAt}}{{else}}N/A{{/if}}
-  Doctor Completed At: {{#if doctorCompletedAt}}{{doctorCompletedAt}}{{else}}N/A{{/if}}
-  Module/Consultorio: {{#if module}}{{module}}{{else}}N/A{{/if}}
-  Professional: {{#if professionalDisplayName}}{{professionalDisplayName}}{{else}}N/A{{/if}}
+- Turno: {{turnNumber}}
+  Servicio: {{service}}
+  Prioridad: {{priority}}
+  Estado: {{status}}
+  Solicitado en: {{#if requestedAt}}{{requestedAt}}{{else}}N/A{{/if}}
+  Llamado en: {{#if calledAt}}{{calledAt}}{{else}}N/A{{/if}}
+  Recepción Completada en: {{#if completedAt}}{{completedAt}}{{else}}N/A{{/if}}
+  Médico Completó en: {{#if doctorCompletedAt}}{{doctorCompletedAt}}{{else}}N/A{{/if}}
+  Módulo/Consultorio: {{#if module}}{{module}}{{else}}N/A{{/if}}
+  Profesional: {{#if professionalDisplayName}}{{professionalDisplayName}}{{else}}N/A{{/if}}
 {{/each}}
 {{else}}
-No turn data provided for analysis.
+No se proporcionaron datos de turnos para el análisis.
 {{/if}}
 
-Your Analysis:
+Tu Análisis (en español):
 `,
 });
 
@@ -103,14 +105,14 @@ const analyzeTurnsFlow = ai.defineFlow(
   },
   async (input) => {
     if (!input.turns || input.turns.length === 0) {
-      return { analysisText: "No turn data was provided to analyze. Please ensure turns are loaded before requesting analysis." };
+      return { analysisText: "No se proporcionaron datos de turnos para analizar. Asegúrese de que los turnos estén cargados antes de solicitar el análisis." };
     }
     try {
       const {output} = await analysisPrompt(input);
       return output!;
     } catch (error) {
-      console.error("Error in analyzeTurnsFlow:", error);
-      return { analysisText: "An error occurred while generating the analysis. Please try again." };
+      console.error("Error en analyzeTurnsFlow:", error);
+      return { analysisText: "Ocurrió un error al generar el análisis. Por favor, inténtelo de nuevo." };
     }
   }
 );
