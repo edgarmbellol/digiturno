@@ -21,14 +21,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, runTransaction } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AVAILABLE_SERVICES, type ServiceDefinition } from "@/lib/services"; // Import shared services
+import { AVAILABLE_SERVICES, type ServiceDefinition } from "@/lib/services";
 
-const AVAILABLE_MODULES = ["Ventanilla 1", "Ventanilla 2", "Ventanilla 3", "Consultorio A", "Consultorio B"];
+const AVAILABLE_MODULES = ["Ventanilla 1", "Ventanilla 2", "Ventanilla 3", "Recepción A", "Recepción B"];
 const MODULE_STORAGE_KEY = "selectedProfessionalModule";
 const SERVICE_STORAGE_KEY = "selectedProfessionalService";
 
@@ -44,7 +44,6 @@ export default function ProfessionalPage() {
   const [selectedService, setSelectedService] = useState<ServiceDefinition | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Module and Service selection logic
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedModule = localStorage.getItem(MODULE_STORAGE_KEY);
@@ -71,7 +70,7 @@ export default function ProfessionalPage() {
   
   const clearSelectedModule = () => {
     setSelectedModule(null);
-    setSelectedService(null); // Also clear service if module is cleared
+    setSelectedService(null); 
     if (typeof window !== "undefined") {
       localStorage.removeItem(MODULE_STORAGE_KEY);
       localStorage.removeItem(SERVICE_STORAGE_KEY);
@@ -98,29 +97,26 @@ export default function ProfessionalPage() {
     toast({ title: "Servicio Deseleccionado", description: "Por favor, seleccione un servicio para continuar." });
   }
 
-
-  // Redirect if not logged in
   useEffect(() => {
     if (!authLoading && !currentUser) {
       router.replace("/login");
     }
   }, [currentUser, authLoading, router]);
 
-  // Firestore listeners
   useEffect(() => {
     if (!currentUser || !selectedModule || !selectedService) {
         setIsLoading(false); 
         setPendingTurns([]); 
+        if (calledTurn) setCalledTurn(null); // Clear called turn if config changes
         return;
     }
     
     setIsLoading(true);
 
-    // Listener for pending turns, filtered by selected service
     const qPending = query(
       collection(db, "turns"), 
       where("status", "==", "pending"), 
-      where("service", "==", selectedService.label), // Filter by selected service label
+      where("service", "==", selectedService.label),
       orderBy("priority", "desc"), 
       orderBy("requestedAt", "asc")
     );
@@ -133,7 +129,6 @@ export default function ProfessionalPage() {
       setIsLoading(false); 
     }, (error) => {
       console.error("Error fetching pending turns:", error);
-      // Check for missing index error
       if (error.message && error.message.includes("indexes?create_composite")) {
          toast({ 
             title: "Error de Configuración de Firestore", 
@@ -147,30 +142,44 @@ export default function ProfessionalPage() {
       setIsLoading(false);
     });
 
-    let unsubscribeCalledTurn: (() => void) | null = null;
-    if (calledTurn?.id) {
-      const turnRef = doc(db, "turns", calledTurn.id);
-      unsubscribeCalledTurn = onSnapshot(turnRef, (docSnapshot) => {
-        if (docSnapshot.exists()) {
-          const updatedTurnData = { id: docSnapshot.id, ...docSnapshot.data() } as Turn;
-          if (updatedTurnData.status === 'called' && updatedTurnData.professionalId === currentUser.uid && updatedTurnData.module === selectedModule) {
-            setCalledTurn(updatedTurnData);
-          } else if (calledTurn?.id === updatedTurnData.id) { 
-            setCalledTurn(null); 
-          }
-        } else {
-          setCalledTurn(null); 
-        }
-      });
+    // Listener for the currently called turn by this professional at this module
+    let unsubscribeCalledTurnListener: (() => void) | null = null;
+    if (currentUser && selectedModule) {
+        const qCalledByThisProfessional = query(
+            collection(db, "turns"),
+            where("status", "==", "called"),
+            where("professionalId", "==", currentUser.uid),
+            where("module", "==", selectedModule),
+            limit(1)
+        );
+
+        unsubscribeCalledTurnListener = onSnapshot(qCalledByThisProfessional, (querySnapshot) => {
+            if (!querySnapshot.empty) {
+                const turnDoc = querySnapshot.docs[0];
+                const currentCalled = { id: turnDoc.id, ...turnDoc.data() } as Turn;
+                 // Only set if it's for the currently selected service
+                if (currentCalled.service === selectedService.label) {
+                    setCalledTurn(currentCalled);
+                } else if (calledTurn?.id === currentCalled.id) {
+                    // If the service changed and this was the active turn, clear it.
+                    setCalledTurn(null);
+                }
+            } else {
+                setCalledTurn(null);
+            }
+        }, (error) => {
+            console.error("Error fetching current called turn:", error);
+            toast({ title: "Error de Sincronización", description: "No se pudo verificar el turno activo.", variant: "destructive" });
+        });
     }
     
     return () => {
       unsubscribePending();
-      if (unsubscribeCalledTurn) {
-        unsubscribeCalledTurn();
+      if (unsubscribeCalledTurnListener) {
+        unsubscribeCalledTurnListener();
       }
     };
-  }, [currentUser, selectedModule, selectedService, toast, calledTurn?.id]);
+  }, [currentUser, selectedModule, selectedService, toast, router]);
 
 
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
@@ -210,15 +219,7 @@ export default function ProfessionalPage() {
         professionalId: currentUser.uid,
         professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
-      const optimisticallyCalledTurn = { 
-        ...nextTurn, 
-        status: 'called', 
-        module: selectedModule, 
-        calledAt: new Timestamp(Math.floor(Date.now()/1000),0),
-        professionalId: currentUser.uid,
-        professionalDisplayName: currentUser.displayName || currentUser.email,
-       } as Turn;
-      setCalledTurn(optimisticallyCalledTurn); 
+      // No optimistic update for setCalledTurn here, rely on the listener
       toast({ title: "Paciente Llamado", description: `Llamando a ${nextTurn.turnNumber} (${selectedService.label}) desde ${selectedModule}.` });
     } catch (error) {
       console.error("Error updating document: ", error);
@@ -227,19 +228,36 @@ export default function ProfessionalPage() {
   };
 
   const markTurnAs = async (status: 'completed' | 'missed') => {
-    if (!calledTurn || !currentUser || !selectedModule) {
+    if (!calledTurn || !currentUser || !selectedModule || !selectedService) {
       toast({ title: "Error", description: "No hay un turno activo o no está configurada la ventanilla/servicio.", variant: "destructive" });
       return;
     }
     try {
       const turnRef = doc(db, "turns", calledTurn.id);
-      await updateDoc(turnRef, {
-        status: status,
-        ...(status === 'completed' && { completedAt: serverTimestamp() }),
-        ...(status === 'missed' && { missedAt: serverTimestamp() }),
-      });
-      toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${status === 'completed' ? 'completado' : 'no se presentó'}.`});
-      setCalledTurn(null);
+      let updateData: Partial<Turn> = {
+        professionalId: currentUser.uid, // Ensure professionalId is set on finalization
+        professionalDisplayName: currentUser.displayName || currentUser.email,
+        module: selectedModule, // Ensure module is set
+      };
+
+      if (status === 'completed') {
+        // If the service is "Facturación", transition to "waiting_doctor"
+        // Otherwise, it's a final "completed"
+        if (calledTurn.service === "Facturación") {
+          updateData.status = 'waiting_doctor';
+        } else {
+          updateData.status = 'completed';
+        }
+        updateData.completedAt = serverTimestamp();
+      } else if (status === 'missed') {
+        updateData.status = 'missed';
+        updateData.missedAt = serverTimestamp();
+      }
+      
+      await updateDoc(turnRef, updateData);
+
+      toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${status === 'completed' ? (calledTurn.service === "Facturación" ? "listo para médico" : "completado") : 'no se presentó'}.`});
+      setCalledTurn(null); // Clear the locally active turn
     } catch (error) {
       console.error("Error updating turn status: ", error);
       toast({ title: "Error", description: "No se pudo actualizar el estado del turno.", variant: "destructive" });
@@ -263,15 +281,15 @@ export default function ProfessionalPage() {
         <Card className="w-full max-w-lg shadow-xl">
           <CardHeader className="bg-primary text-primary-foreground p-6 rounded-t-lg">
             <Briefcase className="h-10 w-10 mx-auto mb-3" />
-            <CardTitle className="text-2xl font-bold text-center">Seleccionar Ventanilla</CardTitle>
+            <CardTitle className="text-2xl font-bold text-center">Seleccionar Ventanilla/Recepción</CardTitle>
             <CardDescription className="text-center text-primary-foreground/80 pt-1">
-              Por favor, elija la ventanilla desde la cual atenderá.
+              Por favor, elija la ventanilla o recepción desde la cual atenderá.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
-            <Select onValueChange={handleModuleSelect}>
+            <Select onValueChange={handleModuleSelect} defaultValue={selectedModule || undefined}>
               <SelectTrigger className="w-full h-12 text-base">
-                <SelectValue placeholder="Elija una ventanilla..." />
+                <SelectValue placeholder="Elija una ventanilla/recepción..." />
               </SelectTrigger>
               <SelectContent>
                 {AVAILABLE_MODULES.map(mod => (
@@ -298,7 +316,7 @@ export default function ProfessionalPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
-            <Select onValueChange={handleServiceSelect}>
+            <Select onValueChange={handleServiceSelect} defaultValue={selectedService?.value || undefined}>
               <SelectTrigger className="w-full h-12 text-base">
                 <SelectValue placeholder="Elija un servicio..." />
               </SelectTrigger>
@@ -316,13 +334,12 @@ export default function ProfessionalPage() {
             <p className="text-xs text-muted-foreground text-center">Esta selección también se recordará.</p>
           </CardContent>
            <CardFooter>
-            <Button variant="outline" onClick={clearSelectedModule} className="w-full">Cambiar Ventanilla</Button>
+            <Button variant="outline" onClick={clearSelectedModule} className="w-full">Cambiar Ventanilla/Recepción</Button>
           </CardFooter>
         </Card>
       </main>
     );
   }
-
 
   if (isLoading && pendingTurns.length === 0 && !calledTurn) {
     return (
@@ -350,7 +367,7 @@ export default function ProfessionalPage() {
                  <Button variant="ghost" size="sm" onClick={clearSelectedService} className="ml-1 p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Servicio">
                     <Workflow className="h-4 w-4" />
                  </Button>
-                 <Button variant="ghost" size="sm" onClick={clearSelectedModule} className="p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla">
+                 <Button variant="ghost" size="sm" onClick={clearSelectedModule} className="p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla/Recepción">
                     <Settings className="h-4 w-4" />
                  </Button>
                 </div>
@@ -361,7 +378,7 @@ export default function ProfessionalPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6">
-            {calledTurn && calledTurn.status === 'called' && (
+            {calledTurn && (
               <Card className="mb-6 bg-accent/20 border-2 border-accent shadow-lg animate-fadeIn">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-2xl text-accent-foreground flex items-center">
@@ -369,7 +386,7 @@ export default function ProfessionalPage() {
                     Atendiendo Turno: {calledTurn.turnNumber}
                   </CardTitle>
                    <CardDescription className="text-accent-foreground/80">
-                    Paciente: {calledTurn.patientId}
+                    Paciente: ...{calledTurn.patientId.slice(-6, -3)}XXX {/* Masked Patient ID */}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm space-y-1 pt-0 pb-3">
@@ -381,7 +398,7 @@ export default function ProfessionalPage() {
                 </CardContent>
                 <CardFooter className="gap-3 p-3 border-t border-accent/30">
                   <Button onClick={() => markTurnAs('completed')} className="flex-1 bg-green-600 hover:bg-green-700 text-white">
-                    <CheckCheck className="mr-2 h-5 w-5" /> Completado
+                    <CheckCheck className="mr-2 h-5 w-5" /> {calledTurn.service === "Facturación" ? "Listo para Médico" : "Completado"}
                   </Button>
                   <Button onClick={() => markTurnAs('missed')} variant="outline" className="flex-1 border-destructive text-destructive hover:bg-destructive/10">
                      <Ban className="mr-2 h-5 w-5" /> No se Presentó
@@ -400,10 +417,10 @@ export default function ProfessionalPage() {
                    <Button 
                     size="lg" 
                     className="bg-accent text-accent-foreground hover:bg-accent/90 w-full sm:w-auto text-base py-6 disabled:opacity-60"
-                    disabled={pendingTurns.length === 0 || !!calledTurn || !selectedModule || !selectedService}
+                    disabled={pendingTurns.length === 0 || !!calledTurn || !selectedModule || !selectedService || isLoading}
                   >
-                    Llamar Siguiente Paciente
-                    <ChevronRight className="ml-2 h-5 w-5" />
+                    {isLoading ? "Cargando..." : "Llamar Siguiente Paciente"}
+                    {!isLoading && <ChevronRight className="ml-2 h-5 w-5" />}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
@@ -427,15 +444,20 @@ export default function ProfessionalPage() {
               </AlertDialog>
             </div>
             
-            {pendingTurns.length === 0 && selectedModule && selectedService ? (
+            {pendingTurns.length === 0 && selectedModule && selectedService && !isLoading ? (
                <div className="text-center py-10 border-2 border-dashed border-muted rounded-lg">
                  <Hourglass className="mx-auto h-16 w-16 text-muted-foreground mb-4 opacity-70" />
                 <p className="text-xl text-muted-foreground">No hay pacientes en espera actualmente para {selectedService.label}.</p>
               </div>
-            ) : (!selectedModule || !selectedService) && pendingTurns.length === 0 ? (
+            ) : (!selectedModule || !selectedService) && pendingTurns.length === 0 && !isLoading ? (
                 <div className="text-center py-10 border-2 border-dashed border-muted rounded-lg">
                     <Settings className="mx-auto h-16 w-16 text-muted-foreground mb-4 opacity-70" />
-                    <p className="text-xl text-muted-foreground">Seleccione una ventanilla y un servicio para ver los pacientes en espera.</p>
+                    <p className="text-xl text-muted-foreground">Seleccione una ventanilla/recepción y un servicio para ver los pacientes en espera.</p>
+                </div>
+            ) : isLoading && pendingTurns.length === 0 ? (
+                <div className="text-center py-10">
+                    <Hourglass className="mx-auto h-12 w-12 text-primary animate-spin" />
+                    <p className="text-lg text-muted-foreground mt-2">Buscando pacientes...</p>
                 </div>
             ) : (
               <ScrollArea className="h-[400px] border rounded-lg p-1 bg-background">
@@ -446,7 +468,7 @@ export default function ProfessionalPage() {
                         <div className="mb-2 sm:mb-0">
                           <p className={`text-lg font-semibold ${turn.priority ? 'text-destructive' : 'text-primary'}`}>{turn.turnNumber}</p>
                           <p className="text-sm text-muted-foreground">{turn.service}</p>
-                          <p className="text-xs text-muted-foreground/80">ID: {turn.patientId}</p>
+                          <p className="text-xs text-muted-foreground/80">ID: ...{turn.patientId.slice(-6,-3)}XXX</p>
                         </div>
                         <div className="text-left sm:text-right w-full sm:w-auto">
                           {turn.priority && (

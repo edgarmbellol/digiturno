@@ -1,31 +1,34 @@
 
-"use client"; // This component uses client-side hooks
+"use client"; 
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Home, Users, Contact, LogIn, LogOut, UserCog } from 'lucide-react'; // Added UserCog
+import { Home, Users, LogIn, LogOut, UserCog, Stethoscope } from 'lucide-react'; // Added Stethoscope
 import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
+import { useToast } from '@/hooks/use-toast';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { currentUser } = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
 
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      router.push('/login'); // Redirect to login page after logout
+      toast({ title: "Sesión Cerrada", description: "Has cerrado sesión exitosamente."});
+      router.push('/login'); 
     } catch (error) {
       console.error("Error signing out: ", error);
-      // Optionally show a toast message for logout error
+      toast({ title: "Error al Salir", description: "No se pudo cerrar la sesión.", variant: "destructive"});
     }
   };
 
   return (
     <>
-      <header className="bg-primary text-primary-foreground p-4 shadow-md">
+      <header className="bg-primary text-primary-foreground p-4 shadow-md sticky top-0 z-50">
         <nav className="container mx-auto flex justify-between items-center">
           <Link href="/" className="text-2xl font-bold hover:opacity-80 transition-opacity">
             TurnoFacil
@@ -36,9 +39,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Home className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Inicio</span>
               </Link>
             </Button>
+            {/* Llamar page is public */}
             <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
               <Link href="/llamar">
-               <Contact className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Llamar</span>
+               <Users className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Ver Llamados</span>
               </Link>
             </Button>
             
@@ -47,6 +51,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
                   <Link href="/profesional">
                     <Users className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Profesional</span>
+                  </Link>
+                </Button>
+                 <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
+                  <Link href="/medicos">
+                    <Stethoscope className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Médicos</span>
                   </Link>
                 </Button>
                 <Button variant="ghost" onClick={handleLogout} className="hover:bg-primary-foreground/10 px-2 sm:px-3">
@@ -60,7 +69,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 </Link>
               </Button>
             )}
-             {/* Admin Link - always visible for now, can be conditionally rendered */}
             <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
               <Link href="/admin">
                 <UserCog className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Admin</span>
