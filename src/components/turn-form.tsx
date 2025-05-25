@@ -24,9 +24,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus } from "lucide-react";
+import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus, Accessibility } from "lucide-react"; // Changed Wheelchair to Accessibility
 import type { LucideIcon } from "lucide-react";
-import { db } from "@/lib/firebase";
+import { db } from "@/lib/firebase"; 
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import type { Turn } from '@/types/turn';
 import { useToast } from "@/hooks/use-toast";
@@ -34,8 +34,8 @@ import { AVAILABLE_SERVICES } from "@/lib/services";
 
 const specialConditions: { name: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">; label: string; icon: LucideIcon }[] = [
   { name: "isSenior", label: "Adulto Mayor", icon: UserCheck },
-  { name: "isPregnant", label: "Gestante", icon: UserCheck },
-  { name: "isDisabled", label: "Discapacitado", icon: UserCheck }, // Consider Wheelchair or other specific icon if available
+  { name: "isPregnant", label: "Gestante", icon: UserCheck }, // Consider a more specific icon if available and desired
+  { name: "isDisabled", label: "Discapacitado", icon: Accessibility }, // Changed from Wheelchair
   { name: "isNone", label: "Ninguna", icon: UserX },
 ];
 
@@ -48,28 +48,26 @@ const formSchema = z.object({
   isDisabled: z.boolean().default(false),
   isNone: z.boolean().default(true),
 }).refine(data => {
-    // If "isNone" is checked, none of the other specific conditions should be checked.
-    if (data.isNone && (data.isSenior || data.isPregnant || data.isDisabled)) {
+    const priorityConditionsSelected = data.isSenior || data.isPregnant || data.isDisabled;
+    if (data.isNone && priorityConditionsSelected) {
+        // If "Ninguna" is checked AND any other condition is checked, it's an error.
         return false;
     }
-    // If "isNone" is NOT checked, at least one specific condition MUST be checked.
-    // This handles the case where user unchecks "isNone" but doesn't check anything else.
-    if (!data.isNone && !data.isSenior && !data.isPregnant && !data.isDisabled) {
+    if (!data.isNone && !priorityConditionsSelected) {
+      // If "Ninguna" is NOT checked AND no other condition is checked, it's an error.
       return false;
     }
     return true;
 }, {
-    message: "Seleccione 'Ninguna' o al menos una condición específica. Si no aplica ninguna, 'Ninguna' debe estar marcada.",
-    path: ["isNone"], // Attach error to a relevant field or a general form error
+    message: "Seleccione 'Ninguna' o al menos una condición específica. Si no aplica ninguna, solo 'Ninguna' debe estar marcada.",
+    path: ["isNone"], // This path might need to be more general if the error can originate from multiple fields.
 });
 
 
 type FormValues = z.infer<typeof formSchema>;
 
-// Simple unique suffix generator for demo purposes
 const generateTurnSuffix = async () => {
-  // In a real app, this might involve a Firestore transaction or a dedicated counter
-  return Date.now().toString().slice(-3); // Last 3 digits of timestamp
+  return Date.now().toString().slice(-3); 
 };
 
 
@@ -100,46 +98,34 @@ export default function TurnForm() {
   });
 
   const { watch, setValue, reset, trigger, getValues, control } = form;
-  const watchIsSenior = watch("isSenior");
-  const watchIsPregnant = watch("isPregnant");
-  const watchIsDisabled = watch("isDisabled");
-  const watchIsNone = watch("isNone");
-  const watchIdNumber = watch("idNumber");
+  
+  const watchConditions = watch(["isSenior", "isPregnant", "isDisabled", "isNone"]);
 
-  // Effect to manage "isNone" checkbox based on other special conditions
   useEffect(() => {
-    const anyPriorityChecked = watchIsSenior || watchIsPregnant || watchIsDisabled;
-    const currentIsNone = getValues("isNone");
+    const [isSenior, isPregnant, isDisabled, isNone] = watchConditions;
+    const anyPriorityChecked = isSenior || isPregnant || isDisabled;
 
-    if (anyPriorityChecked && currentIsNone) {
-      setValue("isNone", false, { shouldValidate: true });
-    } else if (!anyPriorityChecked && !currentIsNone) {
-      // If no specific condition is checked, and "isNone" is also not checked, check "isNone".
-      setValue("isNone", true, { shouldValidate: true });
+    if (isNone && anyPriorityChecked) {
+      if (getValues("isNone")) { // Only update if current value is true
+        setValue("isNone", false, { shouldValidate: true });
+      }
+    } else if (!isNone && !anyPriorityChecked) {
+      if (!getValues("isNone")) { // Only update if current value is false
+         setValue("isNone", true, { shouldValidate: true });
+      }
     }
-  }, [watchIsSenior, watchIsPregnant, watchIsDisabled, setValue, getValues]);
-
-  // Effect to uncheck specific conditions if "isNone" is checked
-  useEffect(() => {
-    if (watchIsNone) {
-      if (getValues("isSenior")) setValue("isSenior", false, { shouldValidate: false });
-      if (getValues("isPregnant")) setValue("isPregnant", false, { shouldValidate: false });
-      if (getValues("isDisabled")) setValue("isDisabled", false, { shouldValidate: false });
-      // Trigger validation for the group after unchecking
-      trigger(["isSenior", "isPregnant", "isDisabled", "isNone"]);
-    }
-  }, [watchIsNone, setValue, getValues, trigger]);
+  }, [watchConditions, setValue, getValues]);
 
 
   const fetchPatientNameById = async (idDocument: string) => {
     if (!idDocument.trim()) {
       setValue("patientName", "");
-      setShowManualNameInput(false); // Hide if ID is cleared
+      setShowManualNameInput(false);
       return;
     }
     setIsFetchingPatientName(true);
-    setShowManualNameInput(false); // Reset manual input visibility
-    setValue("patientName", "", { shouldValidate: true }); // Clear previous name
+    setShowManualNameInput(false); 
+    setValue("patientName", "", { shouldValidate: true }); 
 
     try {
       const response = await fetch('https://hospitalsopo.comsopo.org/api/info_paciente', {
@@ -153,15 +139,28 @@ export default function TurnForm() {
       if (!response.ok) {
         // This could be a 404 (not found) or other server error
         const errorData = await response.json().catch(() => ({})); // Try to parse error
-        console.error("API error response:", errorData, "Status:", response.status);
-        toast({
-          title: "Paciente No Encontrado",
-          description: `No se encontró paciente con cédula ${idDocument}. Por favor, ingrese el nombre manualmente. (Error: ${response.status})`,
-          variant: "default", // Changed from destructive to default as it's an expected outcome
-          duration: 7000,
-        });
-        setShowManualNameInput(true);
-        return;
+        
+        setValue("patientName", ""); 
+
+        if (response.status === 404) {
+          console.warn(`Paciente no encontrado en API externa (404) para ID: ${idDocument}. Respuesta:`, errorData);
+          toast({
+            title: "Paciente No Encontrado",
+            description: `Cédula ${idDocument} no encontrada en el sistema externo. Por favor, ingrese el nombre manualmente.`,
+            variant: "default", // Changed from destructive for 404
+            duration: 7000,
+          });
+        } else {
+          console.error(`Error de API externa al buscar ID: ${idDocument}. Status: ${response.status}. Respuesta:`, errorData);
+          toast({
+            title: "Error de API al Buscar Paciente",
+            description: `La consulta de cédula ${idDocument} falló (Error: ${response.status}). Ingrese el nombre manualmente.`,
+            variant: "destructive",
+            duration: 7000,
+          });
+        }
+        setShowManualNameInput(true); // Show manual input for any error other than network/CORS
+        return; 
       }
 
       const data = await response.json();
@@ -172,8 +171,9 @@ export default function TurnForm() {
           title: "Paciente Encontrado",
           description: `Nombre: ${data.nombre_completo}`,
         });
-        setShowManualNameInput(false); // Name found, no need for manual input
+        setShowManualNameInput(false); 
       } else {
+        setValue("patientName", ""); 
         toast({
           title: "Nombre No Encontrado",
           description: "La cédula fue encontrada pero no se devolvió un nombre. Por favor, ingrese el nombre manualmente.",
@@ -182,15 +182,16 @@ export default function TurnForm() {
         });
         setShowManualNameInput(true);
       }
-    } catch (error) {
-      console.error("Error fetching patient name:", error);
+    } catch (error) { // Catches network errors, CORS, etc.
+      console.error("Error en fetchPatientNameById (red/CORS):", error);
+      setValue("patientName", ""); 
       toast({
         title: "Error al Buscar Paciente",
         description: "No se pudo verificar la cédula. Esto puede ser un problema de red o CORS. Por favor, ingrese el nombre manualmente.",
         variant: "destructive",
         duration: 7000,
       });
-      setShowManualNameInput(true); // Ensure manual input is available on any fetch error
+      setShowManualNameInput(true); 
     } finally {
       setIsFetchingPatientName(false);
     }
@@ -213,21 +214,20 @@ export default function TurnForm() {
 
       const newTurnData: Omit<Turn, 'id' | 'requestedAt'> & { requestedAt: any } = {
         turnNumber: newTurnNumber,
-        service: selectedServiceInfo.label, // Use the label for Firestore
+        service: selectedServiceInfo.label, 
         patientId: `CC ${data.idNumber}`,
-        patientName: data.patientName, // Include patientName
+        patientName: data.patientName,
         priority: priority,
         status: 'pending',
         requestedAt: serverTimestamp(),
       };
 
-      // Add a new document with a generated ID
       await addDoc(collection(db, "turns"), newTurnData);
 
       setSubmittedTurnNumber(newTurnNumber);
       setSubmittedServiceLabel(selectedServiceInfo.label);
       setSubmittedIdNumber(data.idNumber);
-      setSubmittedPatientName(data.patientName); // Store for confirmation screen
+      setSubmittedPatientName(data.patientName); 
       setIsSubmitted(true);
       toast({ title: "Turno Registrado", description: `Tu turno ${newTurnNumber} para ${data.patientName} ha sido creado.` });
     } catch (error) {
@@ -241,13 +241,12 @@ export default function TurnForm() {
   function handleNewTurn() {
     setIsSubmitted(false);
     setSubmittedTurnNumber(null);
-    setSubmittedPatientName(null); // Clear submitted patient name
-    setShowManualNameInput(false); // Reset manual input visibility
-    // Reset form to default values
+    setSubmittedPatientName(null); 
+    setShowManualNameInput(false); 
     reset({
         service: "",
         idNumber: "",
-        patientName: "", // Clear patient name field
+        patientName: "", 
         isSenior: false,
         isPregnant: false,
         isDisabled: false,
@@ -353,7 +352,7 @@ export default function TurnForm() {
                         {...field}
                         className="text-base h-12"
                         onBlur={(e) => {
-                          field.onBlur(); // important to keep react-hook-form's own blur handling
+                          field.onBlur(); 
                           fetchPatientNameById(e.target.value);
                         }}
                       />
@@ -365,7 +364,6 @@ export default function TurnForm() {
               )}
             />
 
-            {/* Patient Name Field: Visible if manual input needed or name is fetched */}
             <FormField
               control={control}
               name="patientName"
@@ -377,10 +375,10 @@ export default function TurnForm() {
                         placeholder="Ingrese nombre completo"
                         {...field}
                         className="text-base h-12"
-                        disabled={isFetchingPatientName || (!showManualNameInput && !!getValues("patientName"))} // Disable if fetching or name is already populated from API and not in manual mode
+                        disabled={isFetchingPatientName || (!showManualNameInput && !!getValues("patientName") && !form.formState.errors.patientName)}
                       />
                   </FormControl>
-                   {showManualNameInput && !isFetchingPatientName && ( // Only show this sub-text if explicitly in manual mode AND not fetching
+                   {showManualNameInput && !isFetchingPatientName && ( 
                     <p className="text-xs text-muted-foreground mt-1">
                       No se encontró el nombre, por favor ingréselo.
                     </p>
@@ -403,34 +401,26 @@ export default function TurnForm() {
                       <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
                                     ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}
-                                    ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed hover:bg-card' : ''
+                                    ${(item.name !== "isNone" && watchConditions[3]) ? 'opacity-50 cursor-not-allowed hover:bg-card' : '' // watchConditions[3] is isNone
                                     }`}
-                        // Removed onClick from FormItem as Checkbox's onCheckedChange is preferred
                       >
                         <FormControl>
                           <Checkbox
                             checked={field.value}
                             onCheckedChange={(checkedState) => {
                                 field.onChange(checkedState);
-                                // trigger validation for the group after any checkbox change
-                                trigger(["isSenior", "isPregnant", "isDisabled", "isNone"]);
+                                // No need to call trigger here, useEffect handles it
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                            disabled={(item.name !== "isNone" && watchIsNone)} // Disable specific conditions if "isNone" is active
+                            disabled={(item.name !== "isNone" && watchConditions[3])} 
                           />
                         </FormControl>
-                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'} ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' }`} />
+                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'} ${(item.name !== "isNone" && watchConditions[3]) ? 'opacity-50' : '' }`} />
                         <FormLabel
-                          // Make FormLabel clickable to toggle the checkbox state as well
-                          onClick={() => {
-                            if (!(item.name !== "isNone" && watchIsNone)) { // Respect disabled state
-                              field.onChange(!field.value);
-                              trigger(["isSenior", "isPregnant", "isDisabled", "isNone"]);
-                            }
-                          }}
+                          htmlFor={field.name} // Ensure htmlFor matches checkbox id for better a11y
                           className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}
-                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed' : '' }`}
+                           ${(item.name !== "isNone" && watchConditions[3]) ? 'opacity-50 cursor-not-allowed' : '' }`}
                         >
                           {item.label}
                         </FormLabel>
@@ -439,7 +429,6 @@ export default function TurnForm() {
                   />
                 ))}
               </div>
-               {/* Display the specific error message for the "isNone" refine validation */}
                <FormMessage>{form.formState.errors.isNone?.message}</FormMessage>
             </FormItem>
 
