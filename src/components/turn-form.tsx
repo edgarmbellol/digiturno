@@ -4,7 +4,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -50,13 +50,16 @@ const formSchema = z.object({
 }).refine(data => {
     const priorityConditionsSelected = data.isSenior || data.isPregnant || data.isDisabled;
     if (data.isNone && priorityConditionsSelected) {
-        return false;
+        return false; // "Ninguna" no puede estar marcada si hay otra condición marcada
     }
     if (!data.isNone && !priorityConditionsSelected) {
-      return false;
+      return false; // Si "Ninguna" no está marcada, al menos una condición debe estarlo
     }
     return true;
 }, {
+    // Este mensaje se aplicará al primer campo del schema si la validación a nivel de objeto falla.
+    // Para mostrarlo bajo el grupo de checkboxes, tendrías que manejar el error manualmente.
+    // O se puede asignar a un path específico como 'isNone' si es el más relevante.
     message: "Seleccione 'Ninguna' o al menos una condición específica. Si no aplica ninguna, solo 'Ninguna' debe estar marcada.",
     path: ["isNone"], 
 });
@@ -95,24 +98,12 @@ export default function TurnForm() {
     },
   });
 
-  const { reset, control, setValue, getValues, watch } = form;
+  const { reset, control, setValue, getValues, watch, trigger } = form;
   
   const watchIsNone = watch("isNone");
   const watchIsSenior = watch("isSenior");
   const watchIsPregnant = watch("isPregnant");
   const watchIsDisabled = watch("isDisabled");
-
-  // Effect to manage enabling/disabling based on "isNone"
-  // This useEffect synchronizes the state if a priority is checked/unchecked
-  useEffect(() => {
-    const anyPriorityChecked = watchIsSenior || watchIsPregnant || watchIsDisabled;
-    if (anyPriorityChecked && watchIsNone) {
-      setValue("isNone", false, { shouldValidate: true });
-    } else if (!anyPriorityChecked && !watchIsNone) {
-      setValue("isNone", true, { shouldValidate: true });
-    }
-  }, [watchIsSenior, watchIsPregnant, watchIsDisabled, watchIsNone, setValue]);
-
 
   const fetchPatientNameById = async (idDocument: string) => {
     if (!idDocument.trim()) {
@@ -135,7 +126,6 @@ export default function TurnForm() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({})); 
-        
         setValue("patientName", ""); 
 
         if (response.status === 404) {
@@ -309,7 +299,7 @@ export default function TurnForm() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="text-base font-semibold">Tipo de Servicio</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value || ""}>
                     <FormControl>
                       <SelectTrigger className="text-base h-12">
                         <SelectValue
@@ -397,7 +387,7 @@ export default function TurnForm() {
                       <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
                                     ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}
-                                    ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed hover:bg-card' : ''
+                                    ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' // Removed cursor-not-allowed
                                     }`}
                       >
                         <FormControl>
@@ -409,43 +399,36 @@ export default function TurnForm() {
 
                               if (item.name === "isNone") {
                                 if (isChecking) {
-                                  // If "isNone" is checked, uncheck all others
                                   setValue("isSenior", false, { shouldValidate: false });
                                   setValue("isPregnant", false, { shouldValidate: false });
                                   setValue("isDisabled", false, { shouldValidate: false });
                                 }
-                              } else {
-                                // This is a priority checkbox
+                              } else { // This is a priority checkbox
                                 if (isChecking) {
-                                  // If a priority item is checked, "isNone" must be false
                                   setValue("isNone", false, { shouldValidate: false });
                                 } else {
                                   // Priority item is unchecked. If no other priority items are checked, "isNone" must be true.
                                   const anyOtherPriorityActive =
-                                    (item.name === "isSenior" ? false : watch("isSenior")) ||
-                                    (item.name === "isPregnant" ? false : watch("isPregnant")) ||
-                                    (item.name === "isDisabled" ? false : watch("isDisabled"));
+                                    (item.name === "isSenior" ? false : getValues("isSenior")) ||
+                                    (item.name === "isPregnant" ? false : getValues("isPregnant")) ||
+                                    (item.name === "isDisabled" ? false : getValues("isDisabled"));
                                   if (!anyOtherPriorityActive) {
                                     setValue("isNone", true, { shouldValidate: false });
                                   }
                                 }
                               }
-                              // Trigger validation for the Zod refine rule
-                              form.trigger("isNone"); 
-                              form.trigger("isSenior");
-                              form.trigger("isPregnant");
-                              form.trigger("isDisabled");
+                              trigger(["isNone", "isSenior", "isPregnant", "isDisabled"]);
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                            disabled={(item.name !== "isNone" && watchIsNone)} 
+                            // Removed disabled prop from here
                           />
                         </FormControl>
                         <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'} ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' }`} />
                         <FormLabel
                           htmlFor={field.name} 
                           className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}
-                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed' : '' }`}
+                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' }`} // Removed cursor-not-allowed
                         >
                           {item.label}
                         </FormLabel>
@@ -468,4 +451,3 @@ export default function TurnForm() {
     </Card>
   );
 }
-
