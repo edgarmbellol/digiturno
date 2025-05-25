@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-const MAX_RECENTLY_CALLED_TURNS = 4; 
+const MAX_RECENTLY_CALLED_TURNS = 3; 
 const MAX_UPCOMING_TURNS = 5; 
 
 export default function CallPatientPage() {
