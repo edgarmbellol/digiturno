@@ -19,6 +19,7 @@ import { UserPlus, ShieldCheck, AlertTriangle, LogIn } from "lucide-react";
 // Admin credentials (HARCODED - NOT FOR PRODUCTION)
 const ADMIN_USERNAME = "EMBL";
 const ADMIN_PASSWORD = "1993";
+const PROFESSIONAL_EMAIL_DOMAIN = "turnofacil.app"; // Domain to append to username
 
 const adminLoginSchema = z.object({
   username: z.string().min(1, "Nombre de usuario requerido."),
@@ -27,7 +28,7 @@ const adminLoginSchema = z.object({
 type AdminLoginValues = z.infer<typeof adminLoginSchema>;
 
 const createUserSchema = z.object({
-  email: z.string().email("Por favor ingrese un correo electrónico válido."),
+  username: z.string().min(3, "El nombre de usuario debe tener al menos 3 caracteres.").regex(/^[a-zA-Z0-9_]+$/, "Solo letras, números y guion bajo permitidos."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
 });
 type CreateUserFormValues = z.infer<typeof createUserSchema>;
@@ -48,7 +49,7 @@ export default function AdminPage() {
 
   const createUserForm = useForm<CreateUserFormValues>({
     resolver: zodResolver(createUserSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { username: "", password: "" },
   });
 
   const handleAdminLogin = (data: AdminLoginValues) => {
@@ -66,28 +67,22 @@ export default function AdminPage() {
 
   const handleCreateUser = async (data: CreateUserFormValues) => {
     setIsCreatingUser(true);
-    // Important: We need to sign out any currently logged-in Firebase user
-    // before attempting to create a new one, to avoid conflicts if the admin
-    // was also a Firebase user.
-    // However, our admin login is not a Firebase auth session.
-    // createUserWithEmailAndPassword will sign in the new user.
+    const emailForFirebase = `${data.username.toLowerCase()}@${PROFESSIONAL_EMAIL_DOMAIN}`;
+    
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+      const userCredential = await createUserWithEmailAndPassword(auth, emailForFirebase, data.password);
       toast({
         title: "Usuario Profesional Creado",
-        description: `El usuario ${userCredential.user.email} ha sido creado y está ahora conectado. Para crear otro usuario, por favor salga y vuelva a ingresar como admin.`,
+        description: `El usuario ${data.username} (login: ${emailForFirebase}) ha sido creado. El nuevo profesional está ahora conectado. Para crear otro usuario, por favor salga y vuelva a ingresar como admin.`,
+        duration: 7000, // Longer duration for important info
       });
       createUserForm.reset();
       // The new user is now signed in.
-      // Optionally, redirect or clear admin auth state.
-      // For now, we'll keep the admin "session" but acknowledge new user is logged in.
-      // If admin wants to create another, they would effectively be logged out of firebase
-      // and would have to log out current professional, then re-login as admin.
     } catch (err: any) {
       console.error("Error creating user:", err);
       let friendlyMessage = "Ocurrió un error al crear el usuario.";
       if (err.code === 'auth/email-already-in-use') {
-        friendlyMessage = "Este correo electrónico ya está en uso.";
+        friendlyMessage = `El nombre de usuario '${data.username}' (email '${emailForFirebase}') ya está en uso.`;
       } else if (err.code === 'auth/weak-password') {
         friendlyMessage = "La contraseña es demasiado débil.";
       }
@@ -188,14 +183,17 @@ export default function AdminPage() {
             <CardContent className="space-y-6 p-6">
               <FormField
                 control={createUserForm.control}
-                name="email"
+                name="username"
                 render={({ field }) => (
                   <FormItem>
-                    <Label htmlFor="prof-email">Correo Electrónico del Profesional</Label>
+                    <Label htmlFor="prof-username">Nombre de Usuario del Profesional</Label>
                     <FormControl>
-                      <Input id="prof-email" type="email" placeholder="profesional@hospital.com" {...field} className="text-base h-11" />
+                      <Input id="prof-username" placeholder="ej: medico_juan_01" {...field} className="text-base h-11" />
                     </FormControl>
                     <FormMessage />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      El profesional iniciará sesión con: &lt;nombredeusuario&gt;@{PROFESSIONAL_EMAIL_DOMAIN}
+                    </p>
                   </FormItem>
                 )}
               />
@@ -223,8 +221,8 @@ export default function AdminPage() {
         </Form>
       </Card>
       <p className="text-xs text-muted-foreground mt-4 text-center max-w-md">
-        **Nota:** Al crear un usuario, ese nuevo usuario será conectado automáticamente en esta sesión del navegador.
-        Para crear múltiples usuarios como admin, deberá cerrar la sesión del profesional recién creado (si la UI lo permite o cerrando y reabriendo la pestaña de admin) y volver a ingresar sus credenciales de admin.
+        **Nota:** Al crear un usuario, ese nuevo usuario profesional será conectado automáticamente en esta sesión del navegador.
+        Para crear múltiples usuarios como admin, deberá cerrar la sesión del profesional recién creado (si la UI lo permite) y volver a ingresar sus credenciales de admin.
       </p>
     </main>
   );

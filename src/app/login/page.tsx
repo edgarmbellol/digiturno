@@ -16,8 +16,10 @@ import { auth } from "@/lib/firebase";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { LogIn, AlertTriangle } from "lucide-react";
 
+const PROFESSIONAL_EMAIL_DOMAIN_FOR_LOGIN_PLACEHOLDER = "turnofacil.app"; // Consistent with admin page
+
 const loginSchema = z.object({
-  email: z.string().email("Por favor ingrese un correo electrónico válido."),
+  email: z.string().email("Por favor ingrese un correo electrónico válido (ej: usuario@turnofacil.app)."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
 });
 
@@ -75,9 +77,9 @@ export default function LoginPage() {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <Label htmlFor="email">Correo Electrónico</Label>
+                    <Label htmlFor="email">Correo Electrónico (Usuario@{PROFESSIONAL_EMAIL_DOMAIN_FOR_LOGIN_PLACEHOLDER})</Label>
                     <FormControl>
-                      <Input id="email" type="email" placeholder="profesional@hospital.com" {...field} className="text-base h-11" />
+                      <Input id="email" type="email" placeholder={`usuario@${PROFESSIONAL_EMAIL_DOMAIN_FOR_LOGIN_PLACEHOLDER}`} {...field} className="text-base h-11" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
