@@ -65,6 +65,8 @@ export default function MedicosPage() {
     if (typeof window !== "undefined") {
       localStorage.removeItem(CONSULTORIO_STORAGE_KEY);
     }
+    setCalledTurn(null); // Clear any active turn if consultorio is changed
+    setWaitingTurns([]); // Clear waiting turns as well
     toast({ title: "Consultorio Deseleccionado", description: "Por favor, seleccione un consultorio para continuar." });
   }
 
@@ -220,7 +222,7 @@ export default function MedicosPage() {
     }
   };
 
-  if (authLoading || (!currentUser && !authLoading && !router.asPath.includes('/login'))) { 
+  if (authLoading || (!authLoading && !currentUser && (typeof router.asPath !== 'string' || !router.asPath.includes('/login')))) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -241,7 +243,7 @@ export default function MedicosPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
-            <Select onValueChange={handleConsultorioSelect} defaultValue={selectedConsultorio || undefined}>
+            <Select onValueChange={handleConsultorioSelect} value={selectedConsultorio || undefined}>
               <SelectTrigger className="w-full h-12 text-base">
                 <SelectValue placeholder="Elija un consultorio..." />
               </SelectTrigger>
@@ -288,7 +290,7 @@ export default function MedicosPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-2xl text-green-700 flex items-center">
                     <PlayCircle className="mr-3 h-8 w-8 animate-pulse text-green-600" />
-                    Atendiendo: {getPatientDisplayName(calledTurn.patientName, calledTurn.patientId)} ({calledTurn.turnNumber})
+                    Atendiendo: {getPatientDisplayName(calledTurn.patientName, calledTurn.patientId)}
                   </CardTitle>
                    <CardDescription className="text-green-700/80">
                      Turno: {calledTurn.turnNumber}
@@ -327,7 +329,7 @@ export default function MedicosPage() {
               </div>
             </div>
             
-            {isLoading && waitingTurns.length === 0 ? (
+            {isLoading && waitingTurns.length === 0 && !calledTurn ? (
                 <div className="text-center py-10">
                     <Hourglass className="mx-auto h-12 w-12 text-blue-500 animate-spin" />
                     <p className="text-lg text-muted-foreground mt-2">Buscando pacientes...</p>
@@ -375,7 +377,7 @@ export default function MedicosPage() {
                               <AlertDialogHeader>
                                 <AlertDialogTitle>Confirmar Llamada</AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  ¿Está seguro que desea llamar a {getPatientDisplayName(turn.patientName, turn.patientId)} (turno {turn.turnNumber}) al consultorio {selectedConsultorio}?
+                                  {`¿Está seguro que desea llamar a ${getPatientDisplayName(turn.patientName, turn.patientId)} (turno ${turn.turnNumber}) al consultorio ${selectedConsultorio}?`}
                                 </AlertDialogDescription>
                                 {!!calledTurn && <div className="mt-2 text-sm text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
                               </AlertDialogHeader>
@@ -412,4 +414,6 @@ export default function MedicosPage() {
     </main>
   );
 }
+    
+
     

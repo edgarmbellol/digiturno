@@ -92,7 +92,7 @@ export default function AnalisisPage() {
     }
   };
 
-  if (authLoading || (!currentUser && !router.asPath.includes("/login"))) {
+  if (authLoading || (!authLoading && !currentUser && (typeof router.asPath !== 'string' || !router.asPath.includes("/login")))) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-secondary/30">
         <Loader2 className="h-16 w-16 text-primary animate-spin" />
@@ -167,3 +167,5 @@ export default function AnalisisPage() {
     </main>
   );
 }
+
+    

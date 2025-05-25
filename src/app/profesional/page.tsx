@@ -96,6 +96,8 @@ export default function ProfessionalPage() {
       localStorage.removeItem(MODULE_STORAGE_KEY);
       localStorage.removeItem(SERVICE_STORAGE_KEY);
     }
+    setPendingTurns([]);
+    setCalledTurn(null);
     toast({ title: "Configuración Deseleccionada", description: "Por favor, seleccione un servicio y ventanilla para continuar." });
   };
 
@@ -106,6 +108,8 @@ export default function ProfessionalPage() {
         if (typeof window !== "undefined") {
             localStorage.setItem(SERVICE_STORAGE_KEY, serviceDef.value);
         }
+        setPendingTurns([]); // Clear pending turns as they depend on service
+        setCalledTurn(null); // Clear called turn as it depends on service
 
         // Check if current selectedModule is valid for the new service
         if (selectedModule && !serviceDef.modules.includes(selectedModule)) {
@@ -126,6 +130,8 @@ export default function ProfessionalPage() {
       localStorage.removeItem(SERVICE_STORAGE_KEY);
       localStorage.removeItem(MODULE_STORAGE_KEY);
     }
+    setPendingTurns([]);
+    setCalledTurn(null);
     toast({ title: "Servicio Deseleccionado", description: "Por favor, seleccione un servicio para continuar." });
   };
 
@@ -301,7 +307,7 @@ export default function ProfessionalPage() {
     }
   };
   
-  if (authLoading || (!currentUser && !authLoading && !router.asPath.includes('/login'))) { 
+  if (authLoading || (!authLoading && !currentUser && (typeof router.asPath !== 'string' || !router.asPath.includes('/login')))) { 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -421,7 +427,7 @@ export default function ProfessionalPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-2xl text-accent-foreground flex items-center">
                     <PlayCircle className="mr-3 h-8 w-8 animate-pulse" />
-                     Atendiendo: {getPatientDisplayName(calledTurn.patientName, calledTurn.patientId)} ({calledTurn.turnNumber})
+                     Atendiendo: {getPatientDisplayName(calledTurn.patientName, calledTurn.patientId)}
                   </CardTitle>
                    <CardDescription className="text-accent-foreground/80">
                      Turno: {calledTurn.turnNumber}
@@ -469,7 +475,6 @@ export default function ProfessionalPage() {
                        `¿Está seguro que desea llamar a ${getPatientDisplayName(nextTurnToDisplayInDialog.patientName, nextTurnToDisplayInDialog.patientId)} (${nextTurnToDisplayInDialog.turnNumber}) para ${nextTurnToDisplayInDialog.service} desde ${selectedModule}?`
                        : `No hay pacientes para llamar para ${selectedService.label}.`}
                     </AlertDialogDescription>
-                    {/* Conditional messages moved to be siblings */}
                     {!!calledTurn && <div className="mt-2 text-sm text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
                     {(!selectedModule || !selectedService) && <div className="mt-2 text-sm text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                   </AlertDialogHeader>
@@ -493,7 +498,7 @@ export default function ProfessionalPage() {
                     <Settings className="mx-auto h-16 w-16 text-muted-foreground mb-4 opacity-70" />
                     <p className="text-xl text-muted-foreground">Seleccione una ventanilla/recepción y un servicio para ver los pacientes en espera.</p>
                 </div>
-            ) : isLoading && pendingTurns.length === 0 ? (
+            ) : isLoading && pendingTurns.length === 0 && !calledTurn ? ( // Added !calledTurn here
                 <div className="text-center py-10">
                     <Hourglass className="mx-auto h-12 w-12 text-primary animate-spin" />
                     <p className="text-lg text-muted-foreground mt-2">Buscando pacientes...</p>
@@ -543,3 +548,5 @@ export default function ProfessionalPage() {
     </main>
   );
 }
+
+    
