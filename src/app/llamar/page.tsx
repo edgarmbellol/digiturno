@@ -159,6 +159,8 @@ export default function CallPatientPage() {
 
         console.log(`Firestore: Turno más reciente ID = ${latestCalledTurnId}, ID previo guardado = ${prevTopCalledTurnIdRef.current}`);
 
+        // Anuncia el turno si es diferente al último anunciado.
+        // Esto ahora incluye el caso en que prevTopCalledTurnIdRef.current es null (carga inicial).
         if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current) {
           console.log("Nuevo turno detectado para anuncio:", latestCalledTurn);
           playNotificationSound();
@@ -230,7 +232,7 @@ export default function CallPatientPage() {
       unsubscribeCalled();
       unsubscribePending();
     };
-  }, [toast]);
+  }, [toast]); // Dependencia toast es estable, no debería causar re-ejecuciones innecesarias.
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -389,5 +391,3 @@ export default function CallPatientPage() {
     </main>
   );
 }
-
-    
