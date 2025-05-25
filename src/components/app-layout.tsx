@@ -4,7 +4,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Home, Users, LogIn, LogOut, UserCog, Stethoscope } from 'lucide-react'; // Added Stethoscope
+import { Home, Users, LogIn, LogOut, UserCog, Stethoscope, BarChart3 } from 'lucide-react'; // Added BarChart3
 import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
@@ -39,7 +39,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Home className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Inicio</span>
               </Link>
             </Button>
-            {/* Llamar page is public */}
             <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
               <Link href="/llamar">
                <Users className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Ver Llamados</span>
@@ -56,6 +55,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                  <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
                   <Link href="/medicos">
                     <Stethoscope className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Médicos</span>
+                  </Link>
+                </Button>
+                <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
+                  <Link href="/analisis">
+                    <BarChart3 className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Análisis IA</span>
                   </Link>
                 </Button>
                 <Button variant="ghost" onClick={handleLogout} className="hover:bg-primary-foreground/10 px-2 sm:px-3">

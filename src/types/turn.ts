@@ -1,6 +1,16 @@
 
 import type { Timestamp } from "firebase/firestore";
 
+export type TurnStatus =
+  | 'pending'
+  | 'called'
+  | 'completed'
+  | 'missed'
+  | 'waiting_doctor'
+  | 'called_by_doctor'
+  | 'completed_by_doctor'
+  | 'missed_by_doctor';
+
 export interface Turn {
   id: string; // Firestore document ID
   turnNumber: string; // Displayable turn number (e.g., F-101, C-055)
@@ -9,15 +19,7 @@ export interface Turn {
   patientName?: string; // Nombre completo del paciente
   priority: boolean;
   requestedAt: Timestamp; // Firestore Timestamp for server-side consistency
-  status:
-    | 'pending'
-    | 'called'
-    | 'completed' // Para servicios como facturación, este es el estado final de esa etapa
-    | 'missed'
-    | 'waiting_doctor' // Paciente completó facturación, esperando ser llamado por médico
-    | 'called_by_doctor' // Médico ha llamado al paciente
-    | 'completed_by_doctor' // Médico completó la consulta
-    | 'missed_by_doctor'; // Paciente no se presentó al médico
+  status: TurnStatus;
   module?: string; // Qué ventanilla/consultorio/profesional llamó el turno
   calledAt?: Timestamp; // Cuándo el turno fue llamado (por ventanilla o médico)
   completedAt?: Timestamp; // Cuándo el turno fue completado por ventanilla
