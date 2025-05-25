@@ -4,7 +4,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Home, Users, Contact, LogIn, LogOut } from 'lucide-react';
+import { Home, Users, Contact, LogIn, LogOut, UserCog } from 'lucide-react'; // Added UserCog
 import { useAuth } from '@/contexts/AuthContext';
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
@@ -60,6 +60,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 </Link>
               </Button>
             )}
+             {/* Admin Link - always visible for now, can be conditionally rendered */}
+            <Button variant="ghost" asChild className="hover:bg-primary-foreground/10 px-2 sm:px-3">
+              <Link href="/admin">
+                <UserCog className="mr-0 sm:mr-2 h-4 w-4" /> <span className="hidden sm:inline">Admin</span>
+              </Link>
+            </Button>
           </div>
         </nav>
       </header>
