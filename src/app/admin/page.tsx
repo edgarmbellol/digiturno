@@ -83,6 +83,8 @@ export default function AdminPage() {
         friendlyMessage = `El correo electrónico '${data.email}' ya está en uso.`;
       } else if (err.code === 'auth/weak-password') {
         friendlyMessage = "La contraseña es demasiado débil.";
+      } else if (err.code === 'auth/operation-not-allowed') {
+        friendlyMessage = "La creación de usuarios con correo/contraseña no está habilitada. Revise la configuración de 'Sign-in method' en su Firebase Console.";
       }
       toast({ title: "Error de Creación", description: friendlyMessage, variant: "destructive" });
     } finally {
