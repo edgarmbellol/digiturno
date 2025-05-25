@@ -19,7 +19,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue, // Added SelectValue
+  SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,8 +40,8 @@ const services: { value: string; label: string; icon: LucideIcon, prefix: string
 
 const specialConditions: { name: keyof FormValues; label: string; icon: LucideIcon }[] = [
   { name: "isSenior", label: "Adulto Mayor", icon: UserCheck },
-  { name: "isPregnant", label: "Gestante", icon: UserCheck }, 
-  { name: "isDisabled", label: "Discapacitado", icon: UserCheck },
+  { name: "isPregnant", label: "Gestante", icon: UserCheck },
+  { name: "isDisabled", label: "Discapacitado", icon: UserCheck }, // Consider a different icon like Wheelchair if available
   { name: "isNone", label: "Ninguna", icon: UserX },
 ];
 
@@ -51,25 +51,30 @@ const formSchema = z.object({
   isSenior: z.boolean().default(false),
   isPregnant: z.boolean().default(false),
   isDisabled: z.boolean().default(false),
-  isNone: z.boolean().default(true), // Default to true as per previous logic
+  isNone: z.boolean().default(true),
 }).refine(data => {
+    // If "Ninguna" is checked, none of the others should be.
     if (data.isNone && (data.isSenior || data.isPregnant || data.isDisabled)) {
         return false;
     }
-    // If "Ninguna" is not checked, at least one other condition should ideally be checked OR it implies no special conditions.
-    // To make it mandatory to select a condition if "Ninguna" is false:
-    // if (!data.isNone && !data.isSenior && !data.isPregnant && !data.isDisabled) return false;
+    // If "Ninguna" is NOT checked, then it implies either a specific condition is checked, or no conditions apply (which should mean "Ninguna" is checked).
+    // This refine ensures that you can't have "Ninguna" false AND all specific conditions false. One must be true.
+    if (!data.isNone && !data.isSenior && !data.isPregnant && !data.isDisabled) {
+      // This state (all false) is invalid by logic, "isNone" should be true.
+      // The useEffect handles this, but validation can catch it.
+      return false;
+    }
     return true;
 }, {
-    message: "Seleccione 'Ninguna' o una condición específica, pero no ambas. Si no aplica ninguna, asegúrese que 'Ninguna' esté marcada.",
-    path: ["isNone"], 
+    message: "Seleccione 'Ninguna' o una condición específica. Si no aplica ninguna, 'Ninguna' debe estar marcada.",
+    path: ["isNone"], // This message will appear under the "isNone" field or related group
 });
 
 
 type FormValues = z.infer<typeof formSchema>;
 
 const generateTurnSuffix = async () => {
-  return Date.now().toString().slice(-3); 
+  return Date.now().toString().slice(-3);
 };
 
 
@@ -90,7 +95,7 @@ export default function TurnForm() {
       isSenior: false,
       isPregnant: false,
       isDisabled: false,
-      isNone: true, 
+      isNone: true,
     },
   });
 
@@ -100,19 +105,37 @@ export default function TurnForm() {
   const watchIsDisabled = watch("isDisabled");
   const watchIsNone = watch("isNone");
 
+  // Effect 1: If "isNone" is checked by the user, uncheck all other specific conditions.
   useEffect(() => {
-    if (watchIsNone) {
-      if(watchIsSenior) setValue("isSenior", false, { shouldValidate: true });
-      if(watchIsPregnant) setValue("isPregnant", false, { shouldValidate: true });
-      if(watchIsDisabled) setValue("isDisabled", false, { shouldValidate: true });
+    if (watchIsNone) { // If "isNone" is true (e.g., user just checked it)
+      if (form.getValues("isSenior")) {
+        setValue("isSenior", false, { shouldValidate: true });
+      }
+      if (form.getValues("isPregnant")) {
+        setValue("isPregnant", false, { shouldValidate: true });
+      }
+      if (form.getValues("isDisabled")) {
+        setValue("isDisabled", false, { shouldValidate: true });
+      }
     }
-  }, [watchIsNone, watchIsSenior, watchIsPregnant, watchIsDisabled, setValue]);
+  }, [watchIsNone, setValue, form]); // Rerun only when watchIsNone changes
 
+  // Effect 2: If any specific condition is checked by the user, uncheck "isNone".
+  // Also, if all specific conditions become unchecked by the user, then "isNone" should be checked.
   useEffect(() => {
-    if (watchIsSenior || watchIsPregnant || watchIsDisabled) {
-      if(watchIsNone) setValue("isNone", false, { shouldValidate: true });
+    const anyPriorityChecked = watchIsSenior || watchIsPregnant || watchIsDisabled;
+
+    if (anyPriorityChecked) {
+      if (form.getValues("isNone")) { // If a priority is checked AND "isNone" is somehow still true
+        setValue("isNone", false, { shouldValidate: true });
+      }
+    } else {
+      // No specific priority condition is checked
+      if (!form.getValues("isNone")) { // And "isNone" is currently false
+        setValue("isNone", true, { shouldValidate: true }); // Then "isNone" must be true
+      }
     }
-  }, [watchIsSenior, watchIsPregnant, watchIsDisabled, watchIsNone, setValue]);
+  }, [watchIsSenior, watchIsPregnant, watchIsDisabled, setValue, form]); // Rerun when any of these change
 
 
   async function onSubmit(data: FormValues) {
@@ -123,7 +146,7 @@ export default function TurnForm() {
       setIsSubmitting(false);
       return;
     }
-    
+
     const priority = data.isSenior || data.isPregnant || data.isDisabled;
 
     try {
@@ -137,11 +160,10 @@ export default function TurnForm() {
         priority: priority,
         status: 'pending',
         requestedAt: serverTimestamp(),
-        // module and calledAt will be set when called
       };
 
       await addDoc(collection(db, "turns"), newTurnData);
-      
+
       setSubmittedTurnNumber(newTurnNumber);
       setSubmittedServiceLabel(selectedServiceInfo.label);
       setSubmittedIdNumber(data.idNumber);
@@ -158,7 +180,7 @@ export default function TurnForm() {
   function handleNewTurn() {
     setIsSubmitted(false);
     setSubmittedTurnNumber(null);
-    reset({ 
+    reset({
         service: "",
         idNumber: "",
         isSenior: false,
@@ -167,7 +189,7 @@ export default function TurnForm() {
         isNone: true,
     });
   }
-  
+
   if (isSubmitted && submittedTurnNumber && submittedServiceLabel && submittedIdNumber) {
     return (
       <Card className="w-full max-w-lg shadow-xl transform transition-all duration-300">
@@ -223,11 +245,10 @@ export default function TurnForm() {
                   <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
                       <SelectTrigger className="text-base h-12">
-                        {/* Use SelectValue to display the selected item or placeholder */}
-                        <SelectValue 
+                        <SelectValue
                           placeholder={
                             <span className="text-muted-foreground">Seleccione un servicio</span>
-                          } 
+                          }
                         />
                       </SelectTrigger>
                     </FormControl>
@@ -268,75 +289,45 @@ export default function TurnForm() {
                   <FormField
                     key={item.name}
                     control={form.control}
-                    name={item.name as keyof FormValues} // Ensure name is a valid key
+                    name={item.name as keyof FormValues}
                     render={({ field }) => (
-                      <FormItem 
+                      <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
                                     ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}
-                                    ${((item.name === "isSenior" && (watchIsPregnant || watchIsDisabled)) ||
-                                      (item.name === "isPregnant" && (watchIsSenior || watchIsDisabled)) ||
-                                      (item.name === "isDisabled" && (watchIsSenior || watchIsPregnant)) ||
-                                      (item.name !== "isNone" && watchIsNone)) ? 'opacity-50 cursor-not-allowed hover:bg-card' : ''
+                                    ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed hover:bg-card' : ''
                                     }`}
-                        onClick={() => {
-                            const isCurrentFieldNone = item.name === "isNone";
-                            const anyOtherPrioritySelected = watchIsSenior || watchIsPregnant || watchIsDisabled;
-
-                            if (isCurrentFieldNone) { // Clicking "Ninguna"
-                                field.onChange(!field.value); // Toggle "Ninguna"
-                                // If "Ninguna" becomes true, others become false (handled by useEffect)
-                                // If "Ninguna" becomes false, nothing else changes here directly by this click
-                            } else { // Clicking a priority condition
-                                if (watchIsNone) { // If "Ninguna" is currently selected
-                                    setValue("isNone", false, {shouldValidate: true}); // Uncheck "Ninguna"
-                                    field.onChange(true); // Check the clicked priority condition
-                                } else {
-                                    field.onChange(!field.value); // Toggle the clicked priority condition
-                                }
-                            }
-                            trigger(item.name as keyof FormValues); // Validate the specific field
-                            trigger(); // Optionally validate the whole form
-                        }}
+                        // Removed onClick from FormItem to simplify event handling
                       >
                         <FormControl>
                           <Checkbox
                             checked={field.value as boolean}
                             onCheckedChange={(checkedState) => {
-                                // This onCheckedChange is now less critical due to FormItem onClick,
-                                // but kept for direct checkbox interaction (e.g. keyboard)
-                                const isCurrentFieldNone = item.name === "isNone";
-                                
-                                if (isCurrentFieldNone) {
-                                    field.onChange(checkedState);
-                                } else {
-                                    if (checkedState && watchIsNone) {
-                                      setValue("isNone", false, {shouldValidate: true});
-                                    }
-                                    field.onChange(checkedState);
-                                }
-                                trigger(item.name as keyof FormValues);
-                                trigger();
+                              field.onChange(checkedState);
+                              // Trigger validation for the current field and then the whole form
+                              // because refine depends on multiple fields.
+                              trigger(item.name as keyof FormValues);
+                              trigger(); // validate all form
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                            disabled={ // Simplified disabling logic based on "Ninguna"
-                                (item.name !== "isNone" && watchIsNone) 
-                            }
+                            disabled={(item.name !== "isNone" && watchIsNone)}
                           />
                         </FormControl>
-                         {/* Display icon based on condition type and selection state */}
-                        {item.name === "isNone" ? 
+                        {item.name === "isNone" ?
                             <UserX className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> :
-                         item.name === "isSenior" ? 
+                         item.name === "isSenior" ?
                             <UserCheck className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> :
                          item.name === "isPregnant" ?
-                            <UserCheck className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> : // Could use a different icon
+                            <UserCheck className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> :
                          item.name === "isDisabled" ?
-                            <AlertTriangle className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> : // Using AlertTriangle as an example
-                            <UserCheck className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> // Fallback
+                            <UserCheck className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} /> : // Using UserCheck, can change to AlertTriangle if preferred for "Disabled"
+                            <UserCheck className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} />
                         }
-                        <FormLabel className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}
-                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed' : '' }`}>
+                        <FormLabel
+                          className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}
+                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed' : '' }`}
+                           // Clicking label should toggle checkbox due to htmlFor association
+                        >
                           {item.label}
                         </FormLabel>
                       </FormItem>
@@ -346,7 +337,7 @@ export default function TurnForm() {
               </div>
                <FormMessage>{form.formState.errors.isNone?.message}</FormMessage>
             </FormItem>
-            
+
             <Button type="submit" className="w-full text-lg py-6 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting}>
               {isSubmitting ? "Registrando..." : "Solicitar Turno"}
               {!isSubmitting && <CheckCircle2 className="ml-2 h-6 w-6" />}
