@@ -159,6 +159,9 @@ export default function ProfessionalPage() {
                 if (selectedService && currentCalled.service === selectedService.label) {
                     setCalledTurn(currentCalled);
                 } else if (calledTurn?.id === currentCalled.id) {
+                    // If the current called turn's service doesn't match the selected service,
+                    // but it IS the turn this professional was handling, clear it.
+                    // This can happen if the professional changes their selected service while attending a turn.
                     setCalledTurn(null);
                 }
             } else {
@@ -191,6 +194,7 @@ export default function ProfessionalPage() {
       return patientName;
     }
     if (patientId) {
+      // Attempt to extract a more readable ID part if patientName is missing
       const idParts = patientId.split(" ");
       return idParts.length > 1 ? `ID: ...${idParts[1].slice(-6, -3)}XXX` : `ID: ${patientId}`;
     }
@@ -199,6 +203,7 @@ export default function ProfessionalPage() {
 
   const getNextTurnToCall = useCallback(() => {
     if (pendingTurns.length === 0) return null;
+    // This assumes pendingTurns is already sorted by priority then requestedAt
     return pendingTurns[0];
   }, [pendingTurns]);
 
@@ -250,6 +255,8 @@ export default function ProfessionalPage() {
       let toastMessageAction = "completado";
 
       if (status === 'completed') {
+        // If the service is "Facturación", transition to 'waiting_doctor'
+        // Otherwise, transition to 'completed'
         if (calledTurn.service === "Facturación") {
           updateData.status = 'waiting_doctor';
           toastMessageAction = "listo para médico";
@@ -266,16 +273,19 @@ export default function ProfessionalPage() {
       await updateDoc(turnRef, updateData);
 
       toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${toastMessageAction}.`});
-      setCalledTurn(null); 
+      setCalledTurn(null); // Clear the current turn from the professional's panel
     } catch (error) {
       console.error("Error updating turn status: ", error);
       toast({ title: "Error", description: "No se pudo actualizar el estado del turno.", variant: "destructive" });
     }
   };
   
+  // Get the next turn for display in the confirmation dialog
   const nextTurnToDisplayInDialog = getNextTurnToCall();
 
+  // Loading state for initial auth check
   if (authLoading || (!currentUser && !authLoading && !router.asPath.includes('/login'))) { 
+    // The router.asPath.includes('/login') check is to prevent redirect loop if already on login
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -284,6 +294,7 @@ export default function ProfessionalPage() {
     );
   }
 
+  // Module selection UI
   if (!selectedModule) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 to-background">
@@ -313,6 +324,7 @@ export default function ProfessionalPage() {
     );
   }
 
+  // Service selection UI (shown after module is selected)
   if (!selectedService) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-accent/10 to-background">
@@ -350,6 +362,8 @@ export default function ProfessionalPage() {
     );
   }
 
+  // Main professional panel UI (shown after module and service are selected)
+  // Initial loading state for turns if module and service are selected but turns haven't loaded yet.
   if (isLoading && pendingTurns.length === 0 && !calledTurn) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
@@ -439,8 +453,8 @@ export default function ProfessionalPage() {
                       {nextTurnToDisplayInDialog ? 
                        `¿Está seguro que desea llamar a ${getPatientDisplayName(nextTurnToDisplayInDialog.patientName, nextTurnToDisplayInDialog.patientId)} (${nextTurnToDisplayInDialog.turnNumber}) para ${nextTurnToDisplayInDialog.service} desde ${selectedModule}?`
                        : `No hay pacientes para llamar para ${selectedService.label}.`}
-                       {!!calledTurn && <p className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</p>}
-                       {(!selectedModule || !selectedService) && <p className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</p>}
+                       {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
+                       {(!selectedModule || !selectedService) && <div className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -474,7 +488,7 @@ export default function ProfessionalPage() {
                   {pendingTurns.map((turn) => (
                     <Card key={turn.id} className={`shadow-md hover:shadow-lg transition-shadow duration-150 ${turn.priority ? 'border-l-4 border-destructive bg-destructive/5 hover:bg-destructive/10' : 'bg-card hover:bg-secondary/30'}`}>
                       <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center">
-                        <div className="mb-2 sm:mb-0">
+                        <div className="mb-2 sm:mb-0 flex-grow">
                           <p className={`text-lg font-semibold ${turn.priority ? 'text-destructive' : 'text-primary'}`}>{turn.turnNumber}</p>
                           <p className="text-sm text-foreground">{getPatientDisplayName(turn.patientName, turn.patientId)}</p>
                           <p className="text-xs text-muted-foreground/80">Servicio: {turn.service}</p>
