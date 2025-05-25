@@ -17,8 +17,8 @@ import { createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { UserPlus, ShieldCheck, AlertTriangle, LogIn } from "lucide-react";
 
 // Admin credentials (HARCODED - NOT FOR PRODUCTION)
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "digiadmin123";
+const ADMIN_USERNAME = "EMBL";
+const ADMIN_PASSWORD = "1993";
 
 const adminLoginSchema = z.object({
   username: z.string().min(1, "Nombre de usuario requerido."),
@@ -125,7 +125,7 @@ export default function AdminPage() {
                     <FormItem>
                       <Label htmlFor="admin-username">Usuario Admin</Label>
                       <FormControl>
-                        <Input id="admin-username" placeholder="admin" {...field} className="text-base h-11" />
+                        <Input id="admin-username" placeholder="EMBL" {...field} className="text-base h-11" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -138,7 +138,7 @@ export default function AdminPage() {
                     <FormItem>
                       <Label htmlFor="admin-password">Contraseña Admin</Label>
                       <FormControl>
-                        <Input id="admin-password" type="password" placeholder="••••••••" {...field} className="text-base h-11" />
+                        <Input id="admin-password" type="password" placeholder="••••" {...field} className="text-base h-11" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -229,4 +229,3 @@ export default function AdminPage() {
     </main>
   );
 }
-
