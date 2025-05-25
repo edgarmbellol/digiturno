@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Stethoscope, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Search, Hospital } from "lucide-react";
+import { Stethoscope, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Search, Hospital, LogOut } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,7 +21,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase"; // Import auth
+import { signOut } from "firebase/auth"; // Import signOut
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -65,8 +66,8 @@ export default function MedicosPage() {
     if (typeof window !== "undefined") {
       localStorage.removeItem(CONSULTORIO_STORAGE_KEY);
     }
-    setCalledTurn(null); // Clear any active turn if consultorio is changed
-    setWaitingTurns([]); // Clear waiting turns as well
+    setCalledTurn(null); 
+    setWaitingTurns([]); 
     toast({ title: "Consultorio Deseleccionado", description: "Por favor, seleccione un consultorio para continuar." });
   }
 
@@ -91,7 +92,7 @@ export default function MedicosPage() {
     const qWaiting = query(
       collection(db, "turns"), 
       where("status", "==", "waiting_doctor"),
-      orderBy("completedAt", "asc") // Order by when they completed facturación
+      orderBy("completedAt", "asc") 
     );
     const unsubscribeWaiting = onSnapshot(qWaiting, (querySnapshot) => {
       const turnsData: Turn[] = [];
@@ -222,7 +223,18 @@ export default function MedicosPage() {
     }
   };
 
-  if (authLoading || (!authLoading && !currentUser && (typeof router.asPath !== 'string' || !router.asPath.includes('/login')))) {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast({ title: "Sesión Cerrada", description: "Has cerrado sesión exitosamente."});
+      router.push('/login');
+    } catch (error) {
+      console.error("Error signing out: ", error);
+      toast({ title: "Error al Salir", description: "No se pudo cerrar la sesión.", variant: "destructive"});
+    }
+  };
+
+  if (authLoading || (!currentUser && !authLoading && (typeof router.asPath !== 'string' || !router.asPath.includes('/login')))) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -265,24 +277,31 @@ export default function MedicosPage() {
       <div className="w-full max-w-6xl space-y-8">
         <Card className="shadow-xl">
           <CardHeader className="bg-blue-600 text-white rounded-t-lg p-6">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-3xl font-bold flex items-center"><Stethoscope className="mr-3 h-8 w-8"/>Panel Médico</CardTitle>
-              <div className="text-right">
-                <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between">
+              <div>
+                <CardTitle className="text-3xl font-bold flex items-center"><Stethoscope className="mr-3 h-8 w-8"/>Panel Médico</CardTitle>
+                <CardDescription className="text-blue-100 pt-1">
+                  Pacientes en espera de atención médica desde {selectedConsultorio}.
+                </CardDescription>
+              </div>
+              <div className="text-left sm:text-right mt-3 sm:mt-0">
+                 <div className="flex items-center gap-2 mb-2">
                  <UserCircle2 className="h-7 w-7 inline-block" />
                  <div>
                     <p className="text-lg font-semibold">{currentUser?.displayName || currentUser?.email}</p>
                     <p className="text-xs text-blue-100">{selectedConsultorio}</p>
                  </div>
-                 <Button variant="ghost" size="sm" onClick={clearSelectedConsultorio} className="ml-1 p-1 h-auto text-white hover:bg-white/20" title="Cambiar Consultorio">
-                    <Settings className="h-4 w-4" />
-                 </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={clearSelectedConsultorio} className="p-1 h-auto text-white hover:bg-white/20" title="Cambiar Consultorio">
+                      <Settings className="h-4 w-4 mr-1" /> <span className="text-xs">Consultorio</span>
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={handleLogout} className="p-1 h-auto text-xs" title="Cerrar Sesión">
+                      <LogOut className="h-4 w-4 mr-1" /> Salir
+                  </Button>
                 </div>
               </div>
             </div>
-            <CardDescription className="text-blue-100 pt-1">
-              Pacientes en espera de atención médica desde {selectedConsultorio}.
-            </CardDescription>
           </CardHeader>
           <CardContent className="p-6">
             {calledTurn && (
@@ -378,8 +397,9 @@ export default function MedicosPage() {
                                 <AlertDialogTitle>Confirmar Llamada</AlertDialogTitle>
                                 <AlertDialogDescription>
                                   {`¿Está seguro que desea llamar a ${getPatientDisplayName(turn.patientName, turn.patientId)} (turno ${turn.turnNumber}) al consultorio ${selectedConsultorio}?`}
+                                
+                                {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
                                 </AlertDialogDescription>
-                                {!!calledTurn && <div className="mt-2 text-sm text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>

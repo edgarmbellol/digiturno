@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Workflow } from "lucide-react";
+import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Workflow, LogOut } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,7 +20,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
-import { db } from "@/lib/firebase";
+import { db, auth } from "@/lib/firebase"; // Import auth
+import { signOut } from "firebase/auth"; // Import signOut
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -53,18 +54,15 @@ export default function ProfessionalPage() {
           setSelectedService(serviceDef); // Set service first
 
           const storedModule = localStorage.getItem(MODULE_STORAGE_KEY);
-          // Then, if a module was stored, check if it's valid for this service
           if (storedModule && serviceDef.modules.includes(storedModule)) {
             setSelectedModule(storedModule);
           } else {
-            // Stored module is not valid for the service or not present, clear it
             setSelectedModule(null);
             if (typeof window !== "undefined") {
                 localStorage.removeItem(MODULE_STORAGE_KEY);
             }
           }
         } else {
-          // Stored service is invalid, clear both service and module
           setSelectedService(null);
           setSelectedModule(null);
           if (typeof window !== "undefined") {
@@ -108,10 +106,9 @@ export default function ProfessionalPage() {
         if (typeof window !== "undefined") {
             localStorage.setItem(SERVICE_STORAGE_KEY, serviceDef.value);
         }
-        setPendingTurns([]); // Clear pending turns as they depend on service
-        setCalledTurn(null); // Clear called turn as it depends on service
+        setPendingTurns([]); 
+        setCalledTurn(null); 
 
-        // Check if current selectedModule is valid for the new service
         if (selectedModule && !serviceDef.modules.includes(selectedModule)) {
           setSelectedModule(null); 
           if (typeof window !== "undefined") {
@@ -210,7 +207,7 @@ export default function ProfessionalPage() {
         unsubscribeCalledTurnListener();
       }
     };
-  }, [currentUser, selectedModule, selectedService, toast, router]); 
+  }, [currentUser, selectedModule, selectedService, toast]); 
 
 
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
@@ -297,7 +294,7 @@ export default function ProfessionalPage() {
         toastMessageAction = "no se presentó";
       }
       
-      await updateDoc(turnRef, updateData as any); // Use 'as any' if type issues persist with serverTimestamp fields
+      await updateDoc(turnRef, updateData as any);
 
       toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${toastMessageAction}.`});
       setCalledTurn(null); 
@@ -306,8 +303,19 @@ export default function ProfessionalPage() {
       toast({ title: "Error", description: "No se pudo actualizar el estado del turno.", variant: "destructive" });
     }
   };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      toast({ title: "Sesión Cerrada", description: "Has cerrado sesión exitosamente."});
+      router.push('/login');
+    } catch (error) {
+      console.error("Error signing out: ", error);
+      toast({ title: "Error al Salir", description: "No se pudo cerrar la sesión.", variant: "destructive"});
+    }
+  };
   
-  if (authLoading || (!authLoading && !currentUser && (typeof router.asPath !== 'string' || !router.asPath.includes('/login')))) { 
+  if (authLoading || (!currentUser && !authLoading && (typeof router.asPath !== 'string' || !router.asPath.includes('/login')))) { 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -399,27 +407,34 @@ export default function ProfessionalPage() {
       <div className="w-full max-w-5xl space-y-8">
         <Card className="shadow-xl">
           <CardHeader className="bg-primary text-primary-foreground rounded-t-lg p-6">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-3xl font-bold">Panel Profesional</CardTitle>
-              <div className="text-right">
-                <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between">
+              <div>
+                <CardTitle className="text-3xl font-bold">Panel Profesional</CardTitle>
+                <CardDescription className="text-primary-foreground/80 pt-1">
+                  Gestione la fila de pacientes para <span className="font-semibold">{selectedService.label}</span> desde {selectedModule}.
+                </CardDescription>
+              </div>
+              <div className="text-left sm:text-right mt-3 sm:mt-0">
+                <div className="flex items-center gap-2 mb-2">
                  <UserCircle2 className="h-7 w-7 inline-block" />
                  <div>
                     <p className="text-lg font-semibold">{currentUser?.displayName || currentUser?.email}</p>
                     <p className="text-xs text-primary-foreground/80">{selectedModule} - {selectedService.label}</p>
                  </div>
-                 <Button variant="ghost" size="sm" onClick={clearSelectedService} className="ml-1 p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Servicio">
-                    <Workflow className="h-4 w-4" />
-                 </Button>
-                 <Button variant="ghost" size="sm" onClick={() => { setSelectedModule(null); if (typeof window !== "undefined") localStorage.removeItem(MODULE_STORAGE_KEY); }} className="p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla/Recepción">
-                    <Settings className="h-4 w-4" />
-                 </Button>
+                </div>
+                <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" onClick={clearSelectedService} className="p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Servicio">
+                        <Workflow className="h-4 w-4 mr-1" /> <span className="text-xs">Servicio</span>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => { setSelectedModule(null); if (typeof window !== "undefined") localStorage.removeItem(MODULE_STORAGE_KEY); }} className="p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla/Recepción">
+                        <Settings className="h-4 w-4 mr-1" /> <span className="text-xs">Ventanilla</span>
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={handleLogout} className="p-1 h-auto text-xs" title="Cerrar Sesión">
+                        <LogOut className="h-4 w-4 mr-1" /> Salir
+                    </Button>
                 </div>
               </div>
             </div>
-            <CardDescription className="text-primary-foreground/80 pt-1">
-              Gestione la fila de pacientes para <span className="font-semibold">{selectedService.label}</span> desde {selectedModule}.
-            </CardDescription>
           </CardHeader>
           <CardContent className="p-6">
             {calledTurn && (
@@ -474,9 +489,10 @@ export default function ProfessionalPage() {
                       {nextTurnToDisplayInDialog ? 
                        `¿Está seguro que desea llamar a ${getPatientDisplayName(nextTurnToDisplayInDialog.patientName, nextTurnToDisplayInDialog.patientId)} (${nextTurnToDisplayInDialog.turnNumber}) para ${nextTurnToDisplayInDialog.service} desde ${selectedModule}?`
                        : `No hay pacientes para llamar para ${selectedService.label}.`}
+                    
+                    {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
+                    {(!selectedModule || !selectedService) && <div className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                     </AlertDialogDescription>
-                    {!!calledTurn && <div className="mt-2 text-sm text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
-                    {(!selectedModule || !selectedService) && <div className="mt-2 text-sm text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -498,7 +514,7 @@ export default function ProfessionalPage() {
                     <Settings className="mx-auto h-16 w-16 text-muted-foreground mb-4 opacity-70" />
                     <p className="text-xl text-muted-foreground">Seleccione una ventanilla/recepción y un servicio para ver los pacientes en espera.</p>
                 </div>
-            ) : isLoading && pendingTurns.length === 0 && !calledTurn ? ( // Added !calledTurn here
+            ) : isLoading && pendingTurns.length === 0 && !calledTurn ? ( 
                 <div className="text-center py-10">
                     <Hourglass className="mx-auto h-12 w-12 text-primary animate-spin" />
                     <p className="text-lg text-muted-foreground mt-2">Buscando pacientes...</p>
