@@ -29,7 +29,7 @@ export default function CallPatientPage() {
 
 
   useEffect(() => {
-    // Crear AudioContext y Beep Buffer al montar
+    console.log("CallPatientPage: useEffect para inicialización de audio ejecutándose.");
     if (typeof window !== "undefined") {
       try {
         const context = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -42,16 +42,16 @@ export default function CallPatientPage() {
         const data = buffer.getChannelData(0);
         const frequency = 880;
         for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05;
+          data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; // Volumen bajo para el beep
         }
         beepBufferRef.current = buffer;
-        console.log("AudioContext y Beep Buffer creados.");
+        console.log("AudioContext y Beep Buffer creados. Estado inicial del AudioContext:", context.state);
 
         if (context.state === 'suspended') {
           console.log("AudioContext está suspendido. Esperando interacción del usuario.");
-          setShowInteractionPrompt(true);
+          if (!userInteractedRef.current) setShowInteractionPrompt(true);
         } else {
-          userInteractedRef.current = true; // Si no está suspendido, consideramos que ya hubo "interacción"
+          userInteractedRef.current = true; 
           console.log("AudioContext está activo (running).");
         }
       } catch (error) {
@@ -61,12 +61,13 @@ export default function CallPatientPage() {
     }
 
     const handleFirstInteraction = async () => {
+      console.log("handleFirstInteraction llamado.");
       if (audioContextRef.current && audioContextRef.current.state === 'suspended' && !userInteractedRef.current) {
         try {
           await audioContextRef.current.resume();
           userInteractedRef.current = true;
           setShowInteractionPrompt(false);
-          console.log("AudioContext reanudado por interacción del usuario.");
+          console.log("AudioContext reanudado por interacción del usuario. Nuevo estado:", audioContextRef.current.state);
           toast({ title: "Audio Activado", description: "Los anuncios de voz y sonidos están activos.", duration: 3000 });
         } catch (e) {
           console.error("Error reanudando AudioContext en la interacción:", e);
@@ -78,18 +79,25 @@ export default function CallPatientPage() {
       window.removeEventListener('keydown', handleFirstInteraction);
     };
     
-    // Añadir listeners solo si el contexto está suspendido inicialmente
     // Damos un pequeño timeout para que el estado showInteractionPrompt se actualice si es necesario
-    setTimeout(() => {
+    // y para asegurar que el AudioContext haya tenido tiempo de establecer su estado inicial.
+    const interactionTimeoutId = setTimeout(() => {
         if (audioContextRef.current?.state === 'suspended' && !userInteractedRef.current) {
+            console.log("Añadiendo listeners para interacción del usuario.");
             window.addEventListener('click', handleFirstInteraction);
             window.addEventListener('touchstart', handleFirstInteraction);
             window.addEventListener('keydown', handleFirstInteraction);
+        } else if (audioContextRef.current?.state === 'running') {
+             console.log("AudioContext ya está 'running', no se necesitan listeners de interacción.");
+             userInteractedRef.current = true;
+             setShowInteractionPrompt(false);
         }
     }, 100);
 
 
     return () => {
+      console.log("CallPatientPage: Limpiando useEffect de inicialización de audio.");
+      clearTimeout(interactionTimeoutId);
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
       window.removeEventListener('keydown', handleFirstInteraction);
@@ -129,6 +137,7 @@ export default function CallPatientPage() {
   };
   
   useEffect(() => {
+    console.log("CallPatientPage: useEffect para suscripción a Firestore ejecutándose.");
     const qCalled = query(
       collection(db, "turns"),
       or(
@@ -144,10 +153,13 @@ export default function CallPatientPage() {
       querySnapshot.forEach((doc) => {
         calledTurnsData.push({ id: doc.id, ...doc.data() } as Turn);
       });
+      console.log('Firestore: Nuevos datos de turnos llamados recibidos. Cantidad:', calledTurnsData.length);
       
       if (calledTurnsData.length > 0) {
         const latestCalledTurn = calledTurnsData[0];
         const latestCalledTurnId = latestCalledTurn.id;
+
+        console.log(`Firestore: Turno más reciente ID = ${latestCalledTurnId}, ID previo guardado = ${prevTopCalledTurnIdRef.current}`);
 
         if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current && prevTopCalledTurnIdRef.current !== null) {
           console.log("Nuevo turno detectado para anuncio:", latestCalledTurn);
@@ -158,26 +170,29 @@ export default function CallPatientPage() {
           let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
           
           setTimeout(() => {
-            console.log("Intentando anuncio de voz:", announcement);
+            console.log("Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
             if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
                  console.warn("Anuncio de voz omitido: El contexto de audio principal no está activo. Se requiere interacción del usuario.");
                  if(!showInteractionPrompt) setShowInteractionPrompt(true);
                  return;
             }
-            speakText(announcement, 'es-CO')
+            speakText(announcement, 'es-CO') // Usando 'es-CO' para Colombia
               .then(() => console.log("Anuncio de voz completado."))
               .catch(err => {
                 console.error("Error al pronunciar el anuncio:", err);
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
               });
           }, 300); 
+        } else if (latestCalledTurnId && prevTopCalledTurnIdRef.current === null) {
+            console.log("Carga inicial de turnos llamados, no se reproducirá sonido/voz para el primero en la lista.");
         }
         prevTopCalledTurnIdRef.current = latestCalledTurnId;
       } else {
+        console.log("Firestore: No hay turnos llamados actualmente.");
         prevTopCalledTurnIdRef.current = null;
       }
       setRecentlyCalledTurns(calledTurnsData);
-      setIsLoading(false);
+      if (isLoading) setIsLoading(false); // Solo cambiar isLoading si realmente estaba cargando
     }, (error) => {
       console.error("Error fetching called/called_by_doctor turns:", error);
        if (error.message && error.message.includes("indexes?create_composite")) {
@@ -211,10 +226,11 @@ export default function CallPatientPage() {
     });
     
     return () => {
+      console.log("CallPatientPage: Limpiando suscripciones de Firestore.");
       unsubscribeCalled();
       unsubscribePending();
     };
-  }, [toast, showInteractionPrompt]); // Agregado showInteractionPrompt a las dependencias
+  }, [toast, isLoading, showInteractionPrompt]); // isLoading y showInteractionPrompt pueden influir en la lógica o re-suscripción.
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -228,7 +244,12 @@ export default function CallPatientPage() {
     }
     if (patientId) {
       const idParts = patientId.split(" ");
-      return idParts.length > 1 ? `Identificación ${idParts[1].slice(-6, -3)} XXX` : `Identificación ${patientId.slice(-6, -3)} XXX`;
+      // Mostrar últimos 3 dígitos del ID (ej. CC 123...XXX)
+      const lastPart = idParts[idParts.length - 1];
+      if (lastPart && lastPart.length > 3) {
+        return `${idParts.slice(0, -1).join(" ")} ...${lastPart.slice(-3)}`;
+      }
+      return patientId;
     }
     return "Paciente";
   }
