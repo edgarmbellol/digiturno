@@ -13,8 +13,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { auth } from "@/lib/firebase";
-import { createUserWithEmailAndPassword, signOut } from "firebase/auth";
-import { UserPlus, ShieldCheck, AlertTriangle, LogIn } from "lucide-react";
+import { createUserWithEmailAndPassword, signOut, updateProfile } from "firebase/auth";
+import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2 } from "lucide-react";
 
 // Admin credentials
 const ADMIN_USERNAME = "EMBL";
@@ -27,6 +27,7 @@ const adminLoginSchema = z.object({
 type AdminLoginValues = z.infer<typeof adminLoginSchema>;
 
 const createUserSchema = z.object({
+  displayName: z.string().min(1, "El nombre del profesional es requerido."),
   email: z.string().email("Por favor ingrese un correo electrónico válido."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
 });
@@ -48,7 +49,7 @@ export default function AdminPage() {
 
   const createUserForm = useForm<CreateUserFormValues>({
     resolver: zodResolver(createUserSchema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { displayName: "", email: "", password: "" },
   });
 
   const handleAdminLogin = (data: AdminLoginValues) => {
@@ -69,9 +70,16 @@ export default function AdminPage() {
     
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
+      // Update profile with displayName
+      if (userCredential.user) {
+        await updateProfile(userCredential.user, {
+          displayName: data.displayName,
+        });
+      }
+      
       toast({
         title: "Usuario Profesional Creado",
-        description: `El usuario con correo ${data.email} ha sido creado. El nuevo profesional está ahora conectado. Para crear otro usuario, por favor salga y vuelva a ingresar como admin.`,
+        description: `El usuario ${data.displayName} (${data.email}) ha sido creado. El nuevo profesional está ahora conectado. Para crear otro usuario, por favor salga y vuelva a ingresar como admin.`,
         duration: 7000,
       });
       createUserForm.reset();
@@ -181,6 +189,19 @@ export default function AdminPage() {
         <Form {...createUserForm}>
           <form onSubmit={createUserForm.handleSubmit(handleCreateUser)}>
             <CardContent className="space-y-6 p-6">
+               <FormField
+                control={createUserForm.control}
+                name="displayName"
+                render={({ field }) => (
+                  <FormItem>
+                    <Label htmlFor="prof-displayName">Nombre del Profesional</Label>
+                    <FormControl>
+                      <Input id="prof-displayName" placeholder="Ej: Dr. Juan Pérez" {...field} className="text-base h-11" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <FormField
                 control={createUserForm.control}
                 name="email"

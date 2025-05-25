@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings } from "lucide-react";
+import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -268,12 +268,12 @@ export default function ProfessionalPage() {
               <CardTitle className="text-3xl font-bold">Panel Profesional</CardTitle>
               <div className="text-right">
                 <div className="flex items-center gap-2">
-                 <Briefcase className="h-7 w-7 inline-block" />
+                 <UserCircle2 className="h-7 w-7 inline-block" />
                  <div>
-                    <p className="text-lg font-semibold">{selectedModule}</p>
-                    <p className="text-xs text-primary-foreground/80">{currentUser?.email}</p>
+                    <p className="text-lg font-semibold">{currentUser?.displayName || currentUser?.email}</p>
+                    <p className="text-xs text-primary-foreground/80">{selectedModule}</p>
                  </div>
-                 <Button variant="ghost" size="sm" onClick={clearSelectedModule} className="ml-2 p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20">
+                 <Button variant="ghost" size="sm" onClick={clearSelectedModule} className="ml-2 p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla">
                     <Settings className="h-4 w-4" />
                  </Button>
                 </div>
