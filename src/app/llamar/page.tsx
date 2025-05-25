@@ -52,6 +52,7 @@ export default function CallPatientPage() {
           if (!userInteractedRef.current) setShowInteractionPrompt(true);
         } else {
           userInteractedRef.current = true; 
+          setShowInteractionPrompt(false); // Asegurarse que se oculte si ya está activo
           console.log("AudioContext está activo (running).");
         }
       } catch (error) {
@@ -79,8 +80,6 @@ export default function CallPatientPage() {
       window.removeEventListener('keydown', handleFirstInteraction);
     };
     
-    // Damos un pequeño timeout para que el estado showInteractionPrompt se actualice si es necesario
-    // y para asegurar que el AudioContext haya tenido tiempo de establecer su estado inicial.
     const interactionTimeoutId = setTimeout(() => {
         if (audioContextRef.current?.state === 'suspended' && !userInteractedRef.current) {
             console.log("Añadiendo listeners para interacción del usuario.");
@@ -169,14 +168,18 @@ export default function CallPatientPage() {
           const moduleName = latestCalledTurn.module || (latestCalledTurn.status === 'called_by_doctor' ? "Consultorio" : "Módulo");
           let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
           
+          // Log antes de setTimeout
+          console.log("Preparando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
+
           setTimeout(() => {
-            console.log("Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
+            // Log dentro de setTimeout, justo antes de llamar a speakText
+            console.log("Dentro de setTimeout - Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
             if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
                  console.warn("Anuncio de voz omitido: El contexto de audio principal no está activo. Se requiere interacción del usuario.");
                  if(!showInteractionPrompt) setShowInteractionPrompt(true);
                  return;
             }
-            speakText(announcement, 'es-CO') // Usando 'es-CO' para Colombia
+            speakText(announcement, 'es-CO') 
               .then(() => console.log("Anuncio de voz completado."))
               .catch(err => {
                 console.error("Error al pronunciar el anuncio:", err);
@@ -192,7 +195,7 @@ export default function CallPatientPage() {
         prevTopCalledTurnIdRef.current = null;
       }
       setRecentlyCalledTurns(calledTurnsData);
-      if (isLoading) setIsLoading(false); // Solo cambiar isLoading si realmente estaba cargando
+      if (isLoading) setIsLoading(false); 
     }, (error) => {
       console.error("Error fetching called/called_by_doctor turns:", error);
        if (error.message && error.message.includes("indexes?create_composite")) {
@@ -230,7 +233,7 @@ export default function CallPatientPage() {
       unsubscribeCalled();
       unsubscribePending();
     };
-  }, [toast, isLoading, showInteractionPrompt]); // isLoading y showInteractionPrompt pueden influir en la lógica o re-suscripción.
+  }, [toast]); // Dependencias: solo toast. isLoading y showInteractionPrompt son manejados internamente.
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -244,7 +247,6 @@ export default function CallPatientPage() {
     }
     if (patientId) {
       const idParts = patientId.split(" ");
-      // Mostrar últimos 3 dígitos del ID (ej. CC 123...XXX)
       const lastPart = idParts[idParts.length - 1];
       if (lastPart && lastPart.length > 3) {
         return `${idParts.slice(0, -1).join(" ")} ...${lastPart.slice(-3)}`;
@@ -317,7 +319,7 @@ export default function CallPatientPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="p-4 text-center">
-                    <p className={`text-xl sm:text-2xl font-semibold mb-1 truncate ${index === 0 ? 'text-accent-foreground' : 'text-foreground'}`}>
+                     <p className={`text-xl sm:text-2xl font-semibold mb-1 truncate ${index === 0 ? 'text-accent-foreground' : 'text-foreground'}`}>
                         {getPatientDisplayName(turn.patientName, turn.patientId)}
                     </p>
                      <p className={`text-lg sm:text-xl ${index === 0 ? 'text-accent-foreground/90' : 'text-muted-foreground'}`}>
@@ -388,4 +390,3 @@ export default function CallPatientPage() {
     </main>
   );
 }
-
