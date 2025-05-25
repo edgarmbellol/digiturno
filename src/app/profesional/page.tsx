@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2 } from "lucide-react";
+import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Workflow } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,9 +26,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { AVAILABLE_SERVICES, type ServiceDefinition } from "@/lib/services"; // Import shared services
 
 const AVAILABLE_MODULES = ["Ventanilla 1", "Ventanilla 2", "Ventanilla 3", "Consultorio A", "Consultorio B"];
 const MODULE_STORAGE_KEY = "selectedProfessionalModule";
+const SERVICE_STORAGE_KEY = "selectedProfessionalService";
 
 
 export default function ProfessionalPage() {
@@ -39,14 +41,22 @@ export default function ProfessionalPage() {
   const [pendingTurns, setPendingTurns] = useState<Turn[]>([]);
   const [calledTurn, setCalledTurn] = useState<Turn | null>(null);
   const [selectedModule, setSelectedModule] = useState<string | null>(null);
+  const [selectedService, setSelectedService] = useState<ServiceDefinition | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Module selection logic
+  // Module and Service selection logic
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedModule = localStorage.getItem(MODULE_STORAGE_KEY);
       if (storedModule && AVAILABLE_MODULES.includes(storedModule)) {
         setSelectedModule(storedModule);
+      }
+      const storedServiceValue = localStorage.getItem(SERVICE_STORAGE_KEY);
+      if (storedServiceValue) {
+        const serviceDef = AVAILABLE_SERVICES.find(s => s.value === storedServiceValue);
+        if (serviceDef) {
+            setSelectedService(serviceDef);
+        }
       }
     }
   }, []);
@@ -61,11 +71,33 @@ export default function ProfessionalPage() {
   
   const clearSelectedModule = () => {
     setSelectedModule(null);
+    setSelectedService(null); // Also clear service if module is cleared
     if (typeof window !== "undefined") {
       localStorage.removeItem(MODULE_STORAGE_KEY);
+      localStorage.removeItem(SERVICE_STORAGE_KEY);
     }
     toast({ title: "Ventanilla Deseleccionada", description: "Por favor, seleccione una ventanilla para continuar." });
   }
+
+  const handleServiceSelect = (serviceValue: string) => {
+    const serviceDef = AVAILABLE_SERVICES.find(s => s.value === serviceValue);
+    if (serviceDef) {
+        setSelectedService(serviceDef);
+        if (typeof window !== "undefined") {
+            localStorage.setItem(SERVICE_STORAGE_KEY, serviceDef.value);
+        }
+        toast({ title: "Servicio Seleccionado", description: `Atendiendo ${serviceDef.label}.` });
+    }
+  };
+
+  const clearSelectedService = () => {
+    setSelectedService(null);
+     if (typeof window !== "undefined") {
+      localStorage.removeItem(SERVICE_STORAGE_KEY);
+    }
+    toast({ title: "Servicio Deseleccionado", description: "Por favor, seleccione un servicio para continuar." });
+  }
+
 
   // Redirect if not logged in
   useEffect(() => {
@@ -76,20 +108,19 @@ export default function ProfessionalPage() {
 
   // Firestore listeners
   useEffect(() => {
-    if (!currentUser || !selectedModule) {
-        setIsLoading(false); // Not ready to fetch data yet
-        setPendingTurns([]); // Clear pending turns if no module or user
-        // If there was a called turn by this professional (before module change/logout), it should clear
-        // This is handled by the calledTurn listener logic below
+    if (!currentUser || !selectedModule || !selectedService) {
+        setIsLoading(false); 
+        setPendingTurns([]); 
         return;
     }
     
-    setIsLoading(true); // Set loading to true when we start fetching
+    setIsLoading(true);
 
-    // Listener for pending turns
+    // Listener for pending turns, filtered by selected service
     const qPending = query(
       collection(db, "turns"), 
       where("status", "==", "pending"), 
+      where("service", "==", selectedService.label), // Filter by selected service label
       orderBy("priority", "desc"), 
       orderBy("requestedAt", "asc")
     );
@@ -99,29 +130,36 @@ export default function ProfessionalPage() {
         turnsData.push({ id: doc.id, ...doc.data() } as Turn);
       });
       setPendingTurns(turnsData);
-      setIsLoading(false); // Data loaded or no data
+      setIsLoading(false); 
     }, (error) => {
       console.error("Error fetching pending turns:", error);
-      toast({ title: "Error", description: "No se pudieron cargar los turnos pendientes.", variant: "destructive" });
+      // Check for missing index error
+      if (error.message && error.message.includes("indexes?create_composite")) {
+         toast({ 
+            title: "Error de Configuración de Firestore", 
+            description: "Se requiere un índice para esta consulta. Por favor, revise la consola del navegador para obtener el enlace para crear el índice y créelo en Firebase Console.", 
+            variant: "destructive",
+            duration: 10000 
+        });
+      } else {
+        toast({ title: "Error", description: "No se pudieron cargar los turnos pendientes para este servicio.", variant: "destructive" });
+      }
       setIsLoading(false);
     });
 
-    // Listener for changes to the turn this professional is currently handling
     let unsubscribeCalledTurn: (() => void) | null = null;
     if (calledTurn?.id) {
       const turnRef = doc(db, "turns", calledTurn.id);
       unsubscribeCalledTurn = onSnapshot(turnRef, (docSnapshot) => {
         if (docSnapshot.exists()) {
           const updatedTurnData = { id: docSnapshot.id, ...docSnapshot.data() } as Turn;
-          // Ensure this professional is still assigned to this 'called' turn
           if (updatedTurnData.status === 'called' && updatedTurnData.professionalId === currentUser.uid && updatedTurnData.module === selectedModule) {
             setCalledTurn(updatedTurnData);
           } else if (calledTurn?.id === updatedTurnData.id) { 
-            // If status changed or module/professionalId mismatch, means this professional is no longer handling it
             setCalledTurn(null); 
           }
         } else {
-          setCalledTurn(null); // Document was deleted
+          setCalledTurn(null); 
         }
       });
     }
@@ -132,7 +170,7 @@ export default function ProfessionalPage() {
         unsubscribeCalledTurn();
       }
     };
-  }, [currentUser, selectedModule, toast, calledTurn?.id]);
+  }, [currentUser, selectedModule, selectedService, toast, calledTurn?.id]);
 
 
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
@@ -148,8 +186,8 @@ export default function ProfessionalPage() {
   }, [pendingTurns]);
 
   const callNextPatient = async () => {
-    if (!currentUser || !selectedModule) {
-      toast({ title: "Error", description: "Debe estar autenticado y haber seleccionado una ventanilla.", variant: "destructive" });
+    if (!currentUser || !selectedModule || !selectedService) {
+      toast({ title: "Error", description: "Debe estar autenticado, haber seleccionado ventanilla y servicio.", variant: "destructive" });
       return;
     }
     if (calledTurn) {
@@ -159,7 +197,7 @@ export default function ProfessionalPage() {
 
     const nextTurn = getNextTurnToCall();
     if (!nextTurn) {
-      toast({ title: "Información", description: "No hay pacientes en espera.", variant: "default" });
+      toast({ title: "Información", description: `No hay pacientes en espera para ${selectedService.label}.`, variant: "default" });
       return;
     }
 
@@ -170,7 +208,7 @@ export default function ProfessionalPage() {
         calledAt: serverTimestamp(),
         module: selectedModule,
         professionalId: currentUser.uid,
-        professionalDisplayName: currentUser.displayName || currentUser.email, // Store professional's identifier
+        professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
       const optimisticallyCalledTurn = { 
         ...nextTurn, 
@@ -181,7 +219,7 @@ export default function ProfessionalPage() {
         professionalDisplayName: currentUser.displayName || currentUser.email,
        } as Turn;
       setCalledTurn(optimisticallyCalledTurn); 
-      toast({ title: "Paciente Llamado", description: `Llamando a ${nextTurn.turnNumber} desde ${selectedModule}.` });
+      toast({ title: "Paciente Llamado", description: `Llamando a ${nextTurn.turnNumber} (${selectedService.label}) desde ${selectedModule}.` });
     } catch (error) {
       console.error("Error updating document: ", error);
       toast({ title: "Error", description: "No se pudo llamar al paciente.", variant: "destructive" });
@@ -190,7 +228,7 @@ export default function ProfessionalPage() {
 
   const markTurnAs = async (status: 'completed' | 'missed') => {
     if (!calledTurn || !currentUser || !selectedModule) {
-      toast({ title: "Error", description: "No hay un turno activo o no está configurada la ventanilla.", variant: "destructive" });
+      toast({ title: "Error", description: "No hay un turno activo o no está configurada la ventanilla/servicio.", variant: "destructive" });
       return;
     }
     try {
@@ -199,7 +237,6 @@ export default function ProfessionalPage() {
         status: status,
         ...(status === 'completed' && { completedAt: serverTimestamp() }),
         ...(status === 'missed' && { missedAt: serverTimestamp() }),
-        // Professional ID and module are already set when called
       });
       toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${status === 'completed' ? 'completado' : 'no se presentó'}.`});
       setCalledTurn(null);
@@ -211,7 +248,7 @@ export default function ProfessionalPage() {
   
   const nextTurnToDisplayInDialog = getNextTurnToCall();
 
-  if (authLoading || (!currentUser && !authLoading)) { // Show loading while auth state is resolving or if redirecting
+  if (authLoading || (!currentUser && !authLoading)) { 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -225,7 +262,7 @@ export default function ProfessionalPage() {
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 to-background">
         <Card className="w-full max-w-lg shadow-xl">
           <CardHeader className="bg-primary text-primary-foreground p-6 rounded-t-lg">
-            <Settings className="h-10 w-10 mx-auto mb-3" />
+            <Briefcase className="h-10 w-10 mx-auto mb-3" />
             <CardTitle className="text-2xl font-bold text-center">Seleccionar Ventanilla</CardTitle>
             <CardDescription className="text-center text-primary-foreground/80 pt-1">
               Por favor, elija la ventanilla desde la cual atenderá.
@@ -244,6 +281,43 @@ export default function ProfessionalPage() {
             </Select>
             <p className="text-xs text-muted-foreground text-center">Esta selección se recordará para esta sesión.</p>
           </CardContent>
+        </Card>
+      </main>
+    );
+  }
+
+  if (!selectedService) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-accent/10 to-background">
+        <Card className="w-full max-w-lg shadow-xl">
+          <CardHeader className="bg-accent text-accent-foreground p-6 rounded-t-lg">
+            <Workflow className="h-10 w-10 mx-auto mb-3" />
+            <CardTitle className="text-2xl font-bold text-center">Seleccionar Servicio</CardTitle>
+            <CardDescription className="text-center text-accent-foreground/80 pt-1">
+              Elija el tipo de servicio que atenderá desde {selectedModule}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-6 space-y-4">
+            <Select onValueChange={handleServiceSelect}>
+              <SelectTrigger className="w-full h-12 text-base">
+                <SelectValue placeholder="Elija un servicio..." />
+              </SelectTrigger>
+              <SelectContent>
+                {AVAILABLE_SERVICES.map(service => (
+                  <SelectItem key={service.value} value={service.value} className="text-base py-2">
+                     <div className="flex items-center gap-2">
+                        <service.icon className="h-5 w-5 text-muted-foreground" />
+                        {service.label}
+                      </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground text-center">Esta selección también se recordará.</p>
+          </CardContent>
+           <CardFooter>
+            <Button variant="outline" onClick={clearSelectedModule} className="w-full">Cambiar Ventanilla</Button>
+          </CardFooter>
         </Card>
       </main>
     );
@@ -271,16 +345,19 @@ export default function ProfessionalPage() {
                  <UserCircle2 className="h-7 w-7 inline-block" />
                  <div>
                     <p className="text-lg font-semibold">{currentUser?.displayName || currentUser?.email}</p>
-                    <p className="text-xs text-primary-foreground/80">{selectedModule}</p>
+                    <p className="text-xs text-primary-foreground/80">{selectedModule} - {selectedService.label}</p>
                  </div>
-                 <Button variant="ghost" size="sm" onClick={clearSelectedModule} className="ml-2 p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla">
+                 <Button variant="ghost" size="sm" onClick={clearSelectedService} className="ml-1 p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Servicio">
+                    <Workflow className="h-4 w-4" />
+                 </Button>
+                 <Button variant="ghost" size="sm" onClick={clearSelectedModule} className="p-1 h-auto text-primary-foreground hover:bg-primary-foreground/20" title="Cambiar Ventanilla">
                     <Settings className="h-4 w-4" />
                  </Button>
                 </div>
               </div>
             </div>
             <CardDescription className="text-primary-foreground/80 pt-1">
-              Gestione la fila de pacientes y llame al siguiente turno desde {selectedModule}.
+              Gestione la fila de pacientes para <span className="font-semibold">{selectedService.label}</span> desde {selectedModule}.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6">
@@ -316,14 +393,14 @@ export default function ProfessionalPage() {
             <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
               <h2 className="text-2xl font-semibold text-foreground flex items-center">
                 <ListChecks className="mr-3 h-7 w-7 text-primary" />
-                Pacientes en Espera ({pendingTurns.length})
+                Pacientes en Espera ({pendingTurns.length}) para {selectedService.label}
               </h2>
                <AlertDialog>
                 <AlertDialogTrigger asChild>
                    <Button 
                     size="lg" 
                     className="bg-accent text-accent-foreground hover:bg-accent/90 w-full sm:w-auto text-base py-6 disabled:opacity-60"
-                    disabled={pendingTurns.length === 0 || !!calledTurn || !selectedModule}
+                    disabled={pendingTurns.length === 0 || !!calledTurn || !selectedModule || !selectedService}
                   >
                     Llamar Siguiente Paciente
                     <ChevronRight className="ml-2 h-5 w-5" />
@@ -335,14 +412,14 @@ export default function ProfessionalPage() {
                     <AlertDialogDescription>
                       {nextTurnToDisplayInDialog ? 
                        `¿Está seguro que desea llamar al paciente con el turno ${nextTurnToDisplayInDialog.turnNumber} (${nextTurnToDisplayInDialog.service}) desde ${selectedModule}?`
-                       : "No hay pacientes para llamar."}
+                       : `No hay pacientes para llamar para ${selectedService.label}.`}
                        {!!calledTurn && <p className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</p>}
-                       {!selectedModule && <p className="mt-2 text-destructive">Debe seleccionar una ventanilla primero.</p>}
+                       {(!selectedModule || !selectedService) && <p className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</p>}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={callNextPatient} disabled={!nextTurnToDisplayInDialog || !!calledTurn || !selectedModule}>
+                    <AlertDialogAction onClick={callNextPatient} disabled={!nextTurnToDisplayInDialog || !!calledTurn || !selectedModule || !selectedService}>
                       Llamar
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -350,15 +427,15 @@ export default function ProfessionalPage() {
               </AlertDialog>
             </div>
             
-            {pendingTurns.length === 0 && selectedModule ? (
+            {pendingTurns.length === 0 && selectedModule && selectedService ? (
                <div className="text-center py-10 border-2 border-dashed border-muted rounded-lg">
                  <Hourglass className="mx-auto h-16 w-16 text-muted-foreground mb-4 opacity-70" />
-                <p className="text-xl text-muted-foreground">No hay pacientes en espera actualmente.</p>
+                <p className="text-xl text-muted-foreground">No hay pacientes en espera actualmente para {selectedService.label}.</p>
               </div>
-            ) : !selectedModule && pendingTurns.length === 0 ? (
+            ) : (!selectedModule || !selectedService) && pendingTurns.length === 0 ? (
                 <div className="text-center py-10 border-2 border-dashed border-muted rounded-lg">
                     <Settings className="mx-auto h-16 w-16 text-muted-foreground mb-4 opacity-70" />
-                    <p className="text-xl text-muted-foreground">Seleccione una ventanilla para ver los pacientes en espera.</p>
+                    <p className="text-xl text-muted-foreground">Seleccione una ventanilla y un servicio para ver los pacientes en espera.</p>
                 </div>
             ) : (
               <ScrollArea className="h-[400px] border rounded-lg p-1 bg-background">
