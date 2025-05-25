@@ -12,8 +12,8 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { speakText } from '@/lib/tts';
 
-const MAX_RECENTLY_CALLED_TURNS = 4; 
-const MAX_UPCOMING_TURNS = 5; 
+const MAX_RECENTLY_CALLED_TURNS = 4;
+const MAX_UPCOMING_TURNS = 5;
 
 export default function CallPatientPage() {
   const [recentlyCalledTurns, setRecentlyCalledTurns] = useState<Turn[]>([]);
@@ -51,8 +51,8 @@ export default function CallPatientPage() {
           console.log("AudioContext está suspendido. Esperando interacción del usuario.");
           if (!userInteractedRef.current) setShowInteractionPrompt(true);
         } else {
-          userInteractedRef.current = true; 
-          setShowInteractionPrompt(false); // Asegurarse que se oculte si ya está activo
+          userInteractedRef.current = true;
+          setShowInteractionPrompt(false); 
           console.log("AudioContext está activo (running).");
         }
       } catch (error) {
@@ -74,7 +74,6 @@ export default function CallPatientPage() {
           console.error("Error reanudando AudioContext en la interacción:", e);
         }
       }
-      // Remover listeners después del intento de reanudar o si ya no es necesario
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
       window.removeEventListener('keydown', handleFirstInteraction);
@@ -160,7 +159,7 @@ export default function CallPatientPage() {
 
         console.log(`Firestore: Turno más reciente ID = ${latestCalledTurnId}, ID previo guardado = ${prevTopCalledTurnIdRef.current}`);
 
-        if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current && prevTopCalledTurnIdRef.current !== null) {
+        if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current) {
           console.log("Nuevo turno detectado para anuncio:", latestCalledTurn);
           playNotificationSound();
 
@@ -168,11 +167,9 @@ export default function CallPatientPage() {
           const moduleName = latestCalledTurn.module || (latestCalledTurn.status === 'called_by_doctor' ? "Consultorio" : "Módulo");
           let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
           
-          // Log antes de setTimeout
           console.log("Preparando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
 
           setTimeout(() => {
-            // Log dentro de setTimeout, justo antes de llamar a speakText
             console.log("Dentro de setTimeout - Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
             if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
                  console.warn("Anuncio de voz omitido: El contexto de audio principal no está activo. Se requiere interacción del usuario.");
@@ -185,25 +182,25 @@ export default function CallPatientPage() {
                 console.error("Error al pronunciar el anuncio:", err);
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
               });
-          }, 300); 
-        } else if (latestCalledTurnId && prevTopCalledTurnIdRef.current === null) {
-            console.log("Carga inicial de turnos llamados, no se reproducirá sonido/voz para el primero en la lista.");
+          }, 300);
+          // Actualizar la referencia al último turno anunciado DESPUÉS de decidir anunciarlo.
+          prevTopCalledTurnIdRef.current = latestCalledTurnId;
         }
-        prevTopCalledTurnIdRef.current = latestCalledTurnId;
       } else {
         console.log("Firestore: No hay turnos llamados actualmente.");
+        // Si no hay turnos llamados, reseteamos la referencia para que el próximo que llegue sea anunciado.
         prevTopCalledTurnIdRef.current = null;
       }
       setRecentlyCalledTurns(calledTurnsData);
-      if (isLoading) setIsLoading(false); 
+      if (isLoading) setIsLoading(false);
     }, (error) => {
       console.error("Error fetching called/called_by_doctor turns:", error);
        if (error.message && error.message.includes("indexes?create_composite")) {
-         toast({ 
-            title: "Error de Configuración de Firestore", 
-            description: "Se requiere un índice para la consulta de turnos llamados. Revise la consola del navegador para el enlace de creación.", 
+         toast({
+            title: "Error de Configuración de Firestore",
+            description: "Se requiere un índice para la consulta de turnos llamados. Revise la consola del navegador para el enlace de creación.",
             variant: "destructive",
-            duration: 10000 
+            duration: 10000
         });
       } else {
         toast({ title: "Error", description: "No se pudieron cargar los turnos llamados.", variant: "destructive" });
@@ -233,7 +230,7 @@ export default function CallPatientPage() {
       unsubscribeCalled();
       unsubscribePending();
     };
-  }, [toast]); // Dependencias: solo toast. isLoading y showInteractionPrompt son manejados internamente.
+  }, [toast]);
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -249,7 +246,9 @@ export default function CallPatientPage() {
       const idParts = patientId.split(" ");
       const lastPart = idParts[idParts.length - 1];
       if (lastPart && lastPart.length > 3) {
-        return `${idParts.slice(0, -1).join(" ")} ...${lastPart.slice(-3)}`;
+        // Muestra "CC ...XXX" o "ID ...XXX"
+        const prefix = idParts.slice(0, -1).join(" ") || (patientId.startsWith("CC") ? "CC" : "ID");
+        return `${prefix} ...${lastPart.slice(-3)}`;
       }
       return patientId;
     }
@@ -301,8 +300,8 @@ export default function CallPatientPage() {
             )}
             <div className={`grid grid-cols-1 ${recentlyCalledTurns.length > 1 ? 'md:grid-cols-2' : ''} ${recentlyCalledTurns.length > 0 ? 'xl:grid-cols-2' : ''} gap-4`}>
               {recentlyCalledTurns.map((turn, index) => (
-                <Card 
-                  key={turn.id} 
+                <Card
+                  key={turn.id}
                   className={`shadow-xl transform transition-all duration-500 ease-out
                               ${index === 0 ? 'border-2 border-accent bg-accent/10 scale-100' : 'bg-card opacity-90 hover:opacity-100 scale-95 hover:scale-[0.97]'}
                               animate-fadeIn`}
@@ -390,3 +389,5 @@ export default function CallPatientPage() {
     </main>
   );
 }
+
+    
