@@ -16,10 +16,9 @@ import { auth } from "@/lib/firebase";
 import { createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { UserPlus, ShieldCheck, AlertTriangle, LogIn } from "lucide-react";
 
-// Admin credentials (HARCODED - NOT FOR PRODUCTION)
+// Admin credentials
 const ADMIN_USERNAME = "EMBL";
 const ADMIN_PASSWORD = "1993";
-const PROFESSIONAL_EMAIL_DOMAIN = "turnofacil.app"; // Domain to append to username
 
 const adminLoginSchema = z.object({
   username: z.string().min(1, "Nombre de usuario requerido."),
@@ -28,7 +27,7 @@ const adminLoginSchema = z.object({
 type AdminLoginValues = z.infer<typeof adminLoginSchema>;
 
 const createUserSchema = z.object({
-  username: z.string().min(3, "El nombre de usuario debe tener al menos 3 caracteres.").regex(/^[a-zA-Z0-9_]+$/, "Solo letras, números y guion bajo permitidos."),
+  email: z.string().email("Por favor ingrese un correo electrónico válido."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
 });
 type CreateUserFormValues = z.infer<typeof createUserSchema>;
@@ -49,7 +48,7 @@ export default function AdminPage() {
 
   const createUserForm = useForm<CreateUserFormValues>({
     resolver: zodResolver(createUserSchema),
-    defaultValues: { username: "", password: "" },
+    defaultValues: { email: "", password: "" },
   });
 
   const handleAdminLogin = (data: AdminLoginValues) => {
@@ -67,14 +66,13 @@ export default function AdminPage() {
 
   const handleCreateUser = async (data: CreateUserFormValues) => {
     setIsCreatingUser(true);
-    const emailForFirebase = `${data.username.toLowerCase()}@${PROFESSIONAL_EMAIL_DOMAIN}`;
     
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, emailForFirebase, data.password);
+      const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       toast({
         title: "Usuario Profesional Creado",
-        description: `El usuario ${data.username} (login: ${emailForFirebase}) ha sido creado. El nuevo profesional está ahora conectado. Para crear otro usuario, por favor salga y vuelva a ingresar como admin.`,
-        duration: 7000, // Longer duration for important info
+        description: `El usuario con correo ${data.email} ha sido creado. El nuevo profesional está ahora conectado. Para crear otro usuario, por favor salga y vuelva a ingresar como admin.`,
+        duration: 7000,
       });
       createUserForm.reset();
       // The new user is now signed in.
@@ -82,7 +80,7 @@ export default function AdminPage() {
       console.error("Error creating user:", err);
       let friendlyMessage = "Ocurrió un error al crear el usuario.";
       if (err.code === 'auth/email-already-in-use') {
-        friendlyMessage = `El nombre de usuario '${data.username}' (email '${emailForFirebase}') ya está en uso.`;
+        friendlyMessage = `El correo electrónico '${data.email}' ya está en uso.`;
       } else if (err.code === 'auth/weak-password') {
         friendlyMessage = "La contraseña es demasiado débil.";
       }
@@ -183,17 +181,14 @@ export default function AdminPage() {
             <CardContent className="space-y-6 p-6">
               <FormField
                 control={createUserForm.control}
-                name="username"
+                name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <Label htmlFor="prof-username">Nombre de Usuario del Profesional</Label>
+                    <Label htmlFor="prof-email">Correo Electrónico del Profesional</Label>
                     <FormControl>
-                      <Input id="prof-username" placeholder="ej: medico_juan_01" {...field} className="text-base h-11" />
+                      <Input id="prof-email" type="email" placeholder="ej: medico.juan@hospital.com" {...field} className="text-base h-11" />
                     </FormControl>
                     <FormMessage />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      El profesional iniciará sesión con: &lt;nombredeusuario&gt;@{PROFESSIONAL_EMAIL_DOMAIN}
-                    </p>
                   </FormItem>
                 )}
               />
