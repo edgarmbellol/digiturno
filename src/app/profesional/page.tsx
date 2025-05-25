@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, runTransaction } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, runTransaction, limit } from "firebase/firestore"; // Added limit here
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -179,7 +179,7 @@ export default function ProfessionalPage() {
         unsubscribeCalledTurnListener();
       }
     };
-  }, [currentUser, selectedModule, selectedService, toast, router]);
+  }, [currentUser, selectedModule, selectedService, toast, router, calledTurn?.id]); // Added calledTurn.id to dependencies
 
 
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
