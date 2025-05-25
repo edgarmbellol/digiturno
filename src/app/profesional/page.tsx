@@ -453,9 +453,9 @@ export default function ProfessionalPage() {
                       {nextTurnToDisplayInDialog ? 
                        `¿Está seguro que desea llamar a ${getPatientDisplayName(nextTurnToDisplayInDialog.patientName, nextTurnToDisplayInDialog.patientId)} (${nextTurnToDisplayInDialog.turnNumber}) para ${nextTurnToDisplayInDialog.service} desde ${selectedModule}?`
                        : `No hay pacientes para llamar para ${selectedService.label}.`}
-                       {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
-                       {(!selectedModule || !selectedService) && <div className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                     </AlertDialogDescription>
+                    {!!calledTurn && <div className="mt-2 text-sm text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
+                    {(!selectedModule || !selectedService) && <div className="mt-2 text-sm text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -527,5 +527,4 @@ export default function ProfessionalPage() {
     </main>
   );
 }
-
     

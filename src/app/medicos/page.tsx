@@ -89,7 +89,7 @@ export default function MedicosPage() {
     const qWaiting = query(
       collection(db, "turns"), 
       where("status", "==", "waiting_doctor"),
-      orderBy("completedAt", "asc") 
+      orderBy("completedAt", "asc") // Order by when they completed facturación
     );
     const unsubscribeWaiting = onSnapshot(qWaiting, (querySnapshot) => {
       const turnsData: Turn[] = [];
@@ -376,8 +376,8 @@ export default function MedicosPage() {
                                 <AlertDialogTitle>Confirmar Llamada</AlertDialogTitle>
                                 <AlertDialogDescription>
                                   ¿Está seguro que desea llamar a {getPatientDisplayName(turn.patientName, turn.patientId)} (turno {turn.turnNumber}) al consultorio {selectedConsultorio}?
-                                  {!!calledTurn && <p className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</p>}
                                 </AlertDialogDescription>
+                                {!!calledTurn && <div className="mt-2 text-sm text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -412,5 +412,4 @@ export default function MedicosPage() {
     </main>
   );
 }
-
     
