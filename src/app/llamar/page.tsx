@@ -3,13 +3,14 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle } from "lucide-react"; // Added UserCircle
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle } from "lucide-react";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { speakText } from '@/lib/tts'; // Importar la utilidad TTS
 
 const MAX_RECENTLY_CALLED_TURNS = 4; 
 const MAX_UPCOMING_TURNS = 5; 
@@ -29,23 +30,26 @@ export default function CallPatientPage() {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
       if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-      if (!audioBufferRef.current && audioContextRef.current) {
         try {
-          // Simple beep sound as a fallback or primary sound
+          await audioContextRef.current.resume();
+        } catch (e) {
+            console.error("Error al intentar reanudar el AudioContext:", e);
+        }
+      }
+      if (!audioBufferRef.current && audioContextRef.current && audioContextRef.current.state === 'running') {
+        try {
           const sampleRate = audioContextRef.current.sampleRate;
-          const duration = 0.2; // Short beep
+          const duration = 0.15; 
           const bufferSize = sampleRate * duration;
           const buffer = audioContextRef.current.createBuffer(1, bufferSize, sampleRate);
           const data = buffer.getChannelData(0);
-          const frequency = 880; // A4 note
+          const frequency = 880; 
           for (let i = 0; i < bufferSize; i++) {
-              data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.1; // 0.1 volume
+              data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; // Volumen bajo para el beep
           }
           audioBufferRef.current = buffer;
         } catch (error) {
-          console.error("Error creating notification sound:", error);
+          console.error("Error creando el sonido de notificación:", error);
         }
       }
     }
@@ -58,9 +62,9 @@ export default function CallPatientPage() {
       source.connect(audioContextRef.current.destination);
       source.start();
     } else {
-      console.warn("Audio context not running or sound buffer not loaded. Sound not played.");
+      // console.warn("Audio context no está listo o buffer no cargado. Sonido no reproducido.");
       if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume().then(playNotificationSound).catch(e => console.error("Error resuming audio context:", e));
+        audioContextRef.current.resume().then(playNotificationSound).catch(e => console.error("Error reanudando audio context para beep:", e));
       }
     }
   };
@@ -76,14 +80,10 @@ export default function CallPatientPage() {
     window.addEventListener('touchstart', handleFirstInteraction);
     window.addEventListener('keydown', handleFirstInteraction);
 
-
     return () => {
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
       window.removeEventListener('keydown', handleFirstInteraction);
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        // audioContextRef.current.close(); // Consider if you want to close context on unmount
-      }
     };
   }, []);
 
@@ -104,17 +104,34 @@ export default function CallPatientPage() {
       querySnapshot.forEach((doc) => {
         calledTurnsData.push({ id: doc.id, ...doc.data() } as Turn);
       });
-      setRecentlyCalledTurns(calledTurnsData);
-
+      
       if (calledTurnsData.length > 0) {
-        const latestCalledTurnId = calledTurnsData[0].id;
-        if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current && prevTopCalledTurnIdRef.current !== null) { // Play only on change, not initial load
+        const latestCalledTurn = calledTurnsData[0];
+        const latestCalledTurnId = latestCalledTurn.id;
+
+        if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current && prevTopCalledTurnIdRef.current !== null) {
           playNotificationSound();
+
+          const patientDisplayName = getPatientDisplayName(latestCalledTurn.patientName, latestCalledTurn.patientId);
+          const moduleName = latestCalledTurn.module || (latestCalledTurn.status === 'called_by_doctor' ? "Consultorio" : "Módulo");
+          // Construir frase para anuncio
+          let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
+          
+          // Intentar hablar después de un breve retraso para el beep
+          setTimeout(() => {
+            speakText(announcement, 'es-CO') // Usar 'es-CO' para español de Colombia o el deseado
+              .catch(err => {
+                console.error("Error al pronunciar el anuncio:", err);
+                // Considerar un toast de fallback si la voz falla y es crítico
+                // toast({ title: "Error de Audio", description: "No se pudo reproducir el anuncio de voz.", variant: "destructive" });
+              });
+          }, 300); // 300ms de retraso
         }
         prevTopCalledTurnIdRef.current = latestCalledTurnId;
       } else {
         prevTopCalledTurnIdRef.current = null;
       }
+      setRecentlyCalledTurns(calledTurnsData);
       setIsLoading(false);
     }, (error) => {
       console.error("Error fetching called/called_by_doctor turns:", error);
@@ -146,12 +163,14 @@ export default function CallPatientPage() {
       setUpcomingTurns(turnsData);
     }, (error) => {
       console.error("Error fetching upcoming turns:", error);
-      // Add toast for pending turns error if needed
     });
     
     return () => {
       unsubscribeCalled();
       unsubscribePending();
+      if (window.speechSynthesis && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel(); // Cancela cualquier habla pendiente al desmontar
+      }
     };
   }, [toast]);
   
@@ -166,9 +185,8 @@ export default function CallPatientPage() {
       return patientName;
     }
     if (patientId) {
-      // Attempt to extract a more readable ID part if patientName is missing
       const idParts = patientId.split(" ");
-      return idParts.length > 1 ? `ID: ...${idParts[1].slice(-6, -3)}XXX` : `ID: ${patientId}`;
+      return idParts.length > 1 ? `Identificación ${idParts[1].slice(-6, -3)} XXX` : `Identificación ${patientId}`;
     }
     return "Paciente";
   }
@@ -200,7 +218,7 @@ export default function CallPatientPage() {
                 <p className="text-sm text-muted-foreground">Aún no se ha llamado a ningún paciente.</p>
               </div>
             )}
-            <div className={`grid grid-cols-1 ${recentlyCalledTurns.length > 1 ? 'md:grid-cols-2' : ''} ${recentlyCalledTurns.length > 2 ? 'xl:grid-cols-2' : ''} gap-4`}>
+            <div className={`grid grid-cols-1 ${recentlyCalledTurns.length > 1 ? 'md:grid-cols-2' : ''} ${recentlyCalledTurns.length > 0 ? 'xl:grid-cols-2' : ''} gap-4`}>
               {recentlyCalledTurns.map((turn, index) => (
                 <Card 
                   key={turn.id} 
@@ -220,14 +238,14 @@ export default function CallPatientPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="p-4 text-center">
-                    <p className={`text-xl sm:text-2xl font-semibold mb-1 ${index === 0 ? 'text-accent-foreground' : 'text-foreground'}`}>
+                    <p className={`text-xl sm:text-2xl font-semibold mb-1 truncate ${index === 0 ? 'text-accent-foreground' : 'text-foreground'}`}>
                         {getPatientDisplayName(turn.patientName, turn.patientId)}
                     </p>
                      <p className={`text-lg sm:text-xl ${index === 0 ? 'text-accent-foreground/90' : 'text-muted-foreground'}`}>
-                      {turn.module || (turn.status === 'called_by_doctor' ? "Consultorio" : "Módulo")}
+                      {turn.module || (turn.status === 'called_by_doctor' ? "Consultorio Médico" : "Ventanilla")}
                     </p>
                     <p className={`text-md sm:text-base ${index === 0 ? 'text-accent-foreground/80' : 'text-muted-foreground'}`}>
-                      {turn.status === 'called_by_doctor' ? `Atención Médica (Origen: ${turn.service})` : turn.service}
+                      Servicio: {turn.service}
                     </p>
                     {turn.calledAt && (
                        <p className={`text-xs mt-2 ${index === 0 ? 'text-accent-foreground/70' : 'text-muted-foreground/70'}`}>
@@ -257,10 +275,10 @@ export default function CallPatientPage() {
                       <span className={`text-lg sm:text-xl font-medium ${turn.priority ? 'text-destructive' : 'text-secondary-foreground'}`}>{turn.turnNumber}</span>
                        {turn.priority && <span className="ml-2 text-xs bg-destructive/80 text-destructive-foreground px-2 py-0.5 rounded-full">Prioritario</span>}
                     </div>
-                    <div className="text-sm text-muted-foreground mb-1 sm:mb-0 sm:mx-2 flex-grow text-left sm:text-center">
+                    <div className="text-sm text-muted-foreground mb-1 sm:mb-0 sm:mx-2 flex-grow text-left sm:text-center truncate">
                         {getPatientDisplayName(turn.patientName, turn.patientId)} ({turn.service})
                     </div>
-                    <span className="text-xs text-muted-foreground/80 self-start sm:self-center"><CalendarClock className="inline h-3 w-3 mr-1"/> {getTimeAgo(turn.requestedAt)}</span>
+                    <span className="text-xs text-muted-foreground/80 self-start sm:self-center whitespace-nowrap"><CalendarClock className="inline h-3 w-3 mr-1"/> {getTimeAgo(turn.requestedAt)}</span>
                   </li>
                 ))}
               </ul>
@@ -282,11 +300,12 @@ export default function CallPatientPage() {
         .animate-fadeIn {
           animation: fadeIn 0.5s ease-out forwards;
         }
+        .truncate {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
       `}</style>
     </main>
   );
 }
-
-    
-
-    
