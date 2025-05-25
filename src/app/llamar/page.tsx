@@ -3,14 +3,14 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle } from "lucide-react";
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { speakText } from '@/lib/tts'; // Importar la utilidad TTS
+import { speakText } from '@/lib/tts';
 
 const MAX_RECENTLY_CALLED_TURNS = 4; 
 const MAX_UPCOMING_TURNS = 5; 
@@ -21,73 +21,113 @@ export default function CallPatientPage() {
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
   const prevTopCalledTurnIdRef = useRef<string | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioBufferRef = useRef<AudioBuffer | null>(null);
 
-  const initializeAudio = async () => {
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const beepBufferRef = useRef<AudioBuffer | null>(null);
+  const userInteractedRef = useRef(false);
+  const [showInteractionPrompt, setShowInteractionPrompt] = useState(false);
+
+
+  useEffect(() => {
+    // Crear AudioContext y Beep Buffer al montar
     if (typeof window !== "undefined") {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      try {
+        const context = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioContextRef.current = context;
+
+        const sampleRate = context.sampleRate;
+        const duration = 0.15;
+        const bufferSize = sampleRate * duration;
+        const buffer = context.createBuffer(1, bufferSize, sampleRate);
+        const data = buffer.getChannelData(0);
+        const frequency = 880;
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05;
+        }
+        beepBufferRef.current = buffer;
+        console.log("AudioContext y Beep Buffer creados.");
+
+        if (context.state === 'suspended') {
+          console.log("AudioContext está suspendido. Esperando interacción del usuario.");
+          setShowInteractionPrompt(true);
+        } else {
+          userInteractedRef.current = true; // Si no está suspendido, consideramos que ya hubo "interacción"
+          console.log("AudioContext está activo (running).");
+        }
+      } catch (error) {
+        console.error("Error inicializando AudioContext o Beep Buffer:", error);
+        toast({ title: "Error de Audio", description: "No se pudo inicializar el sistema de sonido para notificaciones.", variant: "destructive" });
       }
-      if (audioContextRef.current.state === 'suspended') {
+    }
+
+    const handleFirstInteraction = async () => {
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended' && !userInteractedRef.current) {
         try {
           await audioContextRef.current.resume();
+          userInteractedRef.current = true;
+          setShowInteractionPrompt(false);
+          console.log("AudioContext reanudado por interacción del usuario.");
+          toast({ title: "Audio Activado", description: "Los anuncios de voz y sonidos están activos.", duration: 3000 });
         } catch (e) {
-            console.error("Error al intentar reanudar el AudioContext:", e);
+          console.error("Error reanudando AudioContext en la interacción:", e);
         }
       }
-      if (!audioBufferRef.current && audioContextRef.current && audioContextRef.current.state === 'running') {
-        try {
-          const sampleRate = audioContextRef.current.sampleRate;
-          const duration = 0.15; 
-          const bufferSize = sampleRate * duration;
-          const buffer = audioContextRef.current.createBuffer(1, bufferSize, sampleRate);
-          const data = buffer.getChannelData(0);
-          const frequency = 880; 
-          for (let i = 0; i < bufferSize; i++) {
-              data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; // Volumen bajo para el beep
-          }
-          audioBufferRef.current = buffer;
-        } catch (error) {
-          console.error("Error creando el sonido de notificación:", error);
-        }
-      }
-    }
-  };
-
-  const playNotificationSound = () => {
-    if (audioContextRef.current && audioBufferRef.current && audioContextRef.current.state === 'running') {
-      const source = audioContextRef.current.createBufferSource();
-      source.buffer = audioBufferRef.current;
-      source.connect(audioContextRef.current.destination);
-      source.start();
-    } else {
-      // console.warn("Audio context no está listo o buffer no cargado. Sonido no reproducido.");
-      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume().then(playNotificationSound).catch(e => console.error("Error reanudando audio context para beep:", e));
-      }
-    }
-  };
-  
-  useEffect(() => {
-    const handleFirstInteraction = async () => {
-      await initializeAudio();
+      // Remover listeners después del intento de reanudar o si ya no es necesario
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
       window.removeEventListener('keydown', handleFirstInteraction);
     };
-    window.addEventListener('click', handleFirstInteraction);
-    window.addEventListener('touchstart', handleFirstInteraction);
-    window.addEventListener('keydown', handleFirstInteraction);
+    
+    // Añadir listeners solo si el contexto está suspendido inicialmente
+    // Damos un pequeño timeout para que el estado showInteractionPrompt se actualice si es necesario
+    setTimeout(() => {
+        if (audioContextRef.current?.state === 'suspended' && !userInteractedRef.current) {
+            window.addEventListener('click', handleFirstInteraction);
+            window.addEventListener('touchstart', handleFirstInteraction);
+            window.addEventListener('keydown', handleFirstInteraction);
+        }
+    }, 100);
+
 
     return () => {
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
       window.removeEventListener('keydown', handleFirstInteraction);
+      if (window.speechSynthesis && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+      }
+      audioContextRef.current?.close().catch(e => console.error("Error cerrando AudioContext", e));
     };
-  }, []);
+  }, [toast]);
 
 
+  const playNotificationSound = () => {
+    console.log("Intentando reproducir sonido de notificación...");
+    if (!audioContextRef.current) {
+      console.warn("playNotificationSound: AudioContext no está inicializado.");
+      return;
+    }
+    if (audioContextRef.current.state !== 'running') {
+      console.warn(`playNotificationSound: AudioContext no está 'running'. Estado actual: ${audioContextRef.current.state}. Se requiere interacción del usuario.`);
+      if (!userInteractedRef.current) setShowInteractionPrompt(true);
+      return;
+    }
+    if (!beepBufferRef.current) {
+      console.warn("playNotificationSound: Beep Buffer no está cargado.");
+      return;
+    }
+
+    try {
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = beepBufferRef.current;
+      source.connect(audioContextRef.current.destination);
+      source.start();
+      console.log("Sonido de notificación reproducido.");
+    } catch (error) {
+      console.error("Error reproduciendo sonido de notificación:", error);
+    }
+  };
+  
   useEffect(() => {
     const qCalled = query(
       collection(db, "turns"),
@@ -110,22 +150,27 @@ export default function CallPatientPage() {
         const latestCalledTurnId = latestCalledTurn.id;
 
         if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current && prevTopCalledTurnIdRef.current !== null) {
+          console.log("Nuevo turno detectado para anuncio:", latestCalledTurn);
           playNotificationSound();
 
           const patientDisplayName = getPatientDisplayName(latestCalledTurn.patientName, latestCalledTurn.patientId);
           const moduleName = latestCalledTurn.module || (latestCalledTurn.status === 'called_by_doctor' ? "Consultorio" : "Módulo");
-          // Construir frase para anuncio
           let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
           
-          // Intentar hablar después de un breve retraso para el beep
           setTimeout(() => {
-            speakText(announcement, 'es-CO') // Usar 'es-CO' para español de Colombia o el deseado
+            console.log("Intentando anuncio de voz:", announcement);
+            if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
+                 console.warn("Anuncio de voz omitido: El contexto de audio principal no está activo. Se requiere interacción del usuario.");
+                 if(!showInteractionPrompt) setShowInteractionPrompt(true);
+                 return;
+            }
+            speakText(announcement, 'es-CO')
+              .then(() => console.log("Anuncio de voz completado."))
               .catch(err => {
                 console.error("Error al pronunciar el anuncio:", err);
-                // Considerar un toast de fallback si la voz falla y es crítico
-                // toast({ title: "Error de Audio", description: "No se pudo reproducir el anuncio de voz.", variant: "destructive" });
+                toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
               });
-          }, 300); // 300ms de retraso
+          }, 300); 
         }
         prevTopCalledTurnIdRef.current = latestCalledTurnId;
       } else {
@@ -168,11 +213,8 @@ export default function CallPatientPage() {
     return () => {
       unsubscribeCalled();
       unsubscribePending();
-      if (window.speechSynthesis && window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel(); // Cancela cualquier habla pendiente al desmontar
-      }
     };
-  }, [toast]);
+  }, [toast, showInteractionPrompt]); // Agregado showInteractionPrompt a las dependencias
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -186,7 +228,7 @@ export default function CallPatientPage() {
     }
     if (patientId) {
       const idParts = patientId.split(" ");
-      return idParts.length > 1 ? `Identificación ${idParts[1].slice(-6, -3)} XXX` : `Identificación ${patientId}`;
+      return idParts.length > 1 ? `Identificación ${idParts[1].slice(-6, -3)} XXX` : `Identificación ${patientId.slice(-6, -3)} XXX`;
     }
     return "Paciente";
   }
@@ -203,12 +245,28 @@ export default function CallPatientPage() {
 
   return (
     <main className="flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6">
+      {showInteractionPrompt && !userInteractedRef.current && (
+        <Card className="w-full max-w-xl mb-4 shadow-lg border-2 border-yellow-500 bg-yellow-500/10">
+          <CardContent className="p-4 text-center">
+            <div className="flex items-center justify-center">
+              <AlertTriangle className="h-8 w-8 text-yellow-600 mr-3" />
+              <div>
+                <p className="font-semibold text-yellow-700">El audio está desactivado.</p>
+                <p className="text-sm text-yellow-600">Por favor, haz clic en cualquier parte de la página para activar los sonidos y anuncios de voz.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       <div className="w-full max-w-7xl">
         <Card className="w-full shadow-2xl mb-6 bg-card/80 backdrop-blur-sm">
           <CardHeader className="bg-primary/10 text-primary-foreground p-4 rounded-t-lg">
-            <CardTitle className="text-3xl sm:text-4xl font-bold text-center text-primary">
-              Turnos Llamados Recientemente
-            </CardTitle>
+             <div className="flex items-center justify-center gap-2">
+                <Volume2 className="h-8 w-8 text-primary" />
+                <CardTitle className="text-3xl sm:text-4xl font-bold text-center text-primary">
+                Turnos Llamados Recientemente
+                </CardTitle>
+            </div>
           </CardHeader>
           <CardContent className="p-4">
             {recentlyCalledTurns.length === 0 && !isLoading && (
@@ -309,3 +367,4 @@ export default function CallPatientPage() {
     </main>
   );
 }
+

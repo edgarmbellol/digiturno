@@ -10,60 +10,69 @@
 export function speakText(text: string, lang: string = 'es-ES'): Promise<void> {
   return new Promise((resolve, reject) => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      // Si ya está hablando, cancelar el enunciado anterior para priorizar el nuevo.
       if (window.speechSynthesis.speaking) {
-        // console.warn('Speech synthesis is already speaking. Cancelling previous utterance.');
+        console.log('Speech synthesis está ocupado, cancelando habla anterior.');
         window.speechSynthesis.cancel();
       }
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
-      utterance.pitch = 1;    // Tono de voz (0 a 2, 1 es el predeterminado)
-      utterance.rate = 0.9;   // Velocidad del habla (0.1 a 10, 1 es el predeterminado)
-      utterance.volume = 0.8; // Volumen (0 a 1)
+      utterance.pitch = 1;
+      utterance.rate = 0.9;
+      utterance.volume = 0.8;
 
       utterance.onend = () => {
+        console.log("Utterance.onend");
         resolve();
       };
 
       utterance.onerror = (event) => {
-        console.error('SpeechSynthesisUtterance.onerror', event);
         let errorMessage = 'Error en la síntesis de voz.';
         if (event.error) {
             switch (event.error) {
                 case 'not-allowed':
-                    errorMessage = 'La síntesis de voz no está permitida. Se requiere interacción del usuario.';
+                    errorMessage = 'La síntesis de voz no está permitida por el navegador. Podría requerirse interacción del usuario o permisos explícitos.';
                     break;
                 case 'language-unavailable':
-                    errorMessage = `El idioma '${lang}' no está disponible para la síntesis de voz.`;
+                    errorMessage = `El idioma '${lang}' no está disponible para la síntesis de voz en este navegador/dispositivo.`;
                     break;
                 case 'voice-unavailable':
-                     errorMessage = 'No hay voces disponibles para el idioma especificado.';
+                     errorMessage = 'No hay voces disponibles para el idioma especificado en este navegador/dispositivo.';
                      break;
                 case 'audio-busy':
-                    errorMessage = 'El servicio de audio está ocupado.';
+                    errorMessage = 'El servicio de audio del sistema está ocupado.';
                     break;
                 case 'audio-hardware':
-                    errorMessage = 'Error con el hardware de audio.';
+                    errorMessage = 'Error con el hardware de audio del sistema.';
                     break;
+                case 'network':
+                    errorMessage = 'Error de red al intentar cargar recursos de voz.';
+                    break;
+                case 'synthesis-failed':
+                    errorMessage = 'Falló la síntesis del habla.';
+                    break;
+                case 'canceled':
+                    errorMessage = 'El habla fue cancelada.';
+                    console.log("Utterance.onerror: canceled");
+                    resolve(); // Considerar resolver si es 'canceled' para no bloquear flujo si es intencional.
+                    return;
                 default:
-                    errorMessage = `Error de síntesis de voz: ${event.error}`;
+                    errorMessage = `Error de síntesis de voz desconocido: ${event.error}`;
             }
         }
+        console.error('SpeechSynthesisUtterance.onerror:', event.error, errorMessage);
         reject(new Error(errorMessage));
       };
       
-      // Intenta reanudar el contexto de audio si está suspendido (importante para autoplay)
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().then(() => {
-            window.speechSynthesis.speak(utterance);
-        }).catch(err => {
-            console.error("Error resuming audio context for TTS:", err);
-            reject(err); // Rechaza si no se puede reanudar el contexto
-        });
-      } else {
+      // Dejar que el navegador maneje las políticas de autoplay para speechSynthesis.
+      // La interacción del usuario en la página que llama es clave.
+      try {
         window.speechSynthesis.speak(utterance);
+      } catch (e: any) {
+        // Esto podría capturar errores si speak() se llama en un estado inválido,
+        // aunque onerror del utterance es más específico para la síntesis en sí.
+        console.error("Error directo al llamar a window.speechSynthesis.speak:", e);
+        reject(new Error(`Error al iniciar el habla: ${e.message}`));
       }
 
     } else {
