@@ -24,7 +24,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus, Accessibility } from "lucide-react"; // Changed Wheelchair to Accessibility
+import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus, Accessibility } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { db } from "@/lib/firebase"; 
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
@@ -34,8 +34,8 @@ import { AVAILABLE_SERVICES } from "@/lib/services";
 
 const specialConditions: { name: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">; label: string; icon: LucideIcon }[] = [
   { name: "isSenior", label: "Adulto Mayor", icon: UserCheck },
-  { name: "isPregnant", label: "Gestante", icon: UserCheck }, // Consider a more specific icon if available and desired
-  { name: "isDisabled", label: "Discapacitado", icon: Accessibility }, // Changed from Wheelchair
+  { name: "isPregnant", label: "Gestante", icon: UserCheck },
+  { name: "isDisabled", label: "Discapacitado", icon: Accessibility },
   { name: "isNone", label: "Ninguna", icon: UserX },
 ];
 
@@ -50,17 +50,15 @@ const formSchema = z.object({
 }).refine(data => {
     const priorityConditionsSelected = data.isSenior || data.isPregnant || data.isDisabled;
     if (data.isNone && priorityConditionsSelected) {
-        // If "Ninguna" is checked AND any other condition is checked, it's an error.
         return false;
     }
     if (!data.isNone && !priorityConditionsSelected) {
-      // If "Ninguna" is NOT checked AND no other condition is checked, it's an error.
       return false;
     }
     return true;
 }, {
     message: "Seleccione 'Ninguna' o al menos una condición específica. Si no aplica ninguna, solo 'Ninguna' debe estar marcada.",
-    path: ["isNone"], // This path might need to be more general if the error can originate from multiple fields.
+    path: ["isNone"], 
 });
 
 
@@ -97,24 +95,23 @@ export default function TurnForm() {
     },
   });
 
-  const { watch, setValue, reset, trigger, getValues, control } = form;
+  const { reset, control, setValue, getValues, watch } = form;
   
-  const watchConditions = watch(["isSenior", "isPregnant", "isDisabled", "isNone"]);
+  const watchIsNone = watch("isNone");
+  const watchIsSenior = watch("isSenior");
+  const watchIsPregnant = watch("isPregnant");
+  const watchIsDisabled = watch("isDisabled");
 
+  // Effect to manage enabling/disabling based on "isNone"
+  // This useEffect synchronizes the state if a priority is checked/unchecked
   useEffect(() => {
-    const [isSenior, isPregnant, isDisabled, isNone] = watchConditions;
-    const anyPriorityChecked = isSenior || isPregnant || isDisabled;
-
-    if (isNone && anyPriorityChecked) {
-      if (getValues("isNone")) { // Only update if current value is true
-        setValue("isNone", false, { shouldValidate: true });
-      }
-    } else if (!isNone && !anyPriorityChecked) {
-      if (!getValues("isNone")) { // Only update if current value is false
-         setValue("isNone", true, { shouldValidate: true });
-      }
+    const anyPriorityChecked = watchIsSenior || watchIsPregnant || watchIsDisabled;
+    if (anyPriorityChecked && watchIsNone) {
+      setValue("isNone", false, { shouldValidate: true });
+    } else if (!anyPriorityChecked && !watchIsNone) {
+      setValue("isNone", true, { shouldValidate: true });
     }
-  }, [watchConditions, setValue, getValues]);
+  }, [watchIsSenior, watchIsPregnant, watchIsDisabled, watchIsNone, setValue]);
 
 
   const fetchPatientNameById = async (idDocument: string) => {
@@ -137,8 +134,7 @@ export default function TurnForm() {
       });
 
       if (!response.ok) {
-        // This could be a 404 (not found) or other server error
-        const errorData = await response.json().catch(() => ({})); // Try to parse error
+        const errorData = await response.json().catch(() => ({})); 
         
         setValue("patientName", ""); 
 
@@ -147,7 +143,7 @@ export default function TurnForm() {
           toast({
             title: "Paciente No Encontrado",
             description: `Cédula ${idDocument} no encontrada en el sistema externo. Por favor, ingrese el nombre manualmente.`,
-            variant: "default", // Changed from destructive for 404
+            variant: "default", 
             duration: 7000,
           });
         } else {
@@ -159,7 +155,7 @@ export default function TurnForm() {
             duration: 7000,
           });
         }
-        setShowManualNameInput(true); // Show manual input for any error other than network/CORS
+        setShowManualNameInput(true); 
         return; 
       }
 
@@ -182,7 +178,7 @@ export default function TurnForm() {
         });
         setShowManualNameInput(true);
       }
-    } catch (error) { // Catches network errors, CORS, etc.
+    } catch (error) { 
       console.error("Error en fetchPatientNameById (red/CORS):", error);
       setValue("patientName", ""); 
       toast({
@@ -401,26 +397,55 @@ export default function TurnForm() {
                       <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
                                     ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}
-                                    ${(item.name !== "isNone" && watchConditions[3]) ? 'opacity-50 cursor-not-allowed hover:bg-card' : '' // watchConditions[3] is isNone
+                                    ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed hover:bg-card' : ''
                                     }`}
                       >
                         <FormControl>
                           <Checkbox
                             checked={field.value}
-                            onCheckedChange={(checkedState) => {
-                                field.onChange(checkedState);
-                                // No need to call trigger here, useEffect handles it
+                            onCheckedChange={(checkedValue) => {
+                              const isChecking = Boolean(checkedValue);
+                              field.onChange(isChecking); // Update this field's value
+
+                              if (item.name === "isNone") {
+                                if (isChecking) {
+                                  // If "isNone" is checked, uncheck all others
+                                  setValue("isSenior", false, { shouldValidate: false });
+                                  setValue("isPregnant", false, { shouldValidate: false });
+                                  setValue("isDisabled", false, { shouldValidate: false });
+                                }
+                              } else {
+                                // This is a priority checkbox
+                                if (isChecking) {
+                                  // If a priority item is checked, "isNone" must be false
+                                  setValue("isNone", false, { shouldValidate: false });
+                                } else {
+                                  // Priority item is unchecked. If no other priority items are checked, "isNone" must be true.
+                                  const anyOtherPriorityActive =
+                                    (item.name === "isSenior" ? false : watch("isSenior")) ||
+                                    (item.name === "isPregnant" ? false : watch("isPregnant")) ||
+                                    (item.name === "isDisabled" ? false : watch("isDisabled"));
+                                  if (!anyOtherPriorityActive) {
+                                    setValue("isNone", true, { shouldValidate: false });
+                                  }
+                                }
+                              }
+                              // Trigger validation for the Zod refine rule
+                              form.trigger("isNone"); 
+                              form.trigger("isSenior");
+                              form.trigger("isPregnant");
+                              form.trigger("isDisabled");
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                            disabled={(item.name !== "isNone" && watchConditions[3])} 
+                            disabled={(item.name !== "isNone" && watchIsNone)} 
                           />
                         </FormControl>
-                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'} ${(item.name !== "isNone" && watchConditions[3]) ? 'opacity-50' : '' }`} />
+                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'} ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' }`} />
                         <FormLabel
-                          htmlFor={field.name} // Ensure htmlFor matches checkbox id for better a11y
+                          htmlFor={field.name} 
                           className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}
-                           ${(item.name !== "isNone" && watchConditions[3]) ? 'opacity-50 cursor-not-allowed' : '' }`}
+                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50 cursor-not-allowed' : '' }`}
                         >
                           {item.label}
                         </FormLabel>
