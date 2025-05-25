@@ -3,10 +3,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope } from "lucide-react"; // Added Stethoscope
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle } from "lucide-react"; // Added UserCircle
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
-import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore"; // Added 'or'
+import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -33,24 +33,19 @@ export default function CallPatientPage() {
       }
       if (!audioBufferRef.current && audioContextRef.current) {
         try {
-          const beepSound = "data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU"+Array(1e3).join("123");
-          const response = await fetch(beepSound); 
-          const arrayBuffer = await response.arrayBuffer();
-          audioBufferRef.current = await audioContextRef.current.decodeAudioData(arrayBuffer);
-        } catch (error) {
-          console.error("Error loading notification sound:", error);
-          if (audioContextRef.current && !audioBufferRef.current) {
-            const sampleRate = audioContextRef.current.sampleRate;
-            const duration = 0.2; 
-            const bufferSize = sampleRate * duration;
-            const buffer = audioContextRef.current.createBuffer(1, bufferSize, sampleRate);
-            const data = buffer.getChannelData(0);
-            const frequency = 880; 
-            for (let i = 0; i < bufferSize; i++) {
-                data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.1; 
-            }
-            audioBufferRef.current = buffer;
+          // Simple beep sound as a fallback or primary sound
+          const sampleRate = audioContextRef.current.sampleRate;
+          const duration = 0.2; // Short beep
+          const bufferSize = sampleRate * duration;
+          const buffer = audioContextRef.current.createBuffer(1, bufferSize, sampleRate);
+          const data = buffer.getChannelData(0);
+          const frequency = 880; // A4 note
+          for (let i = 0; i < bufferSize; i++) {
+              data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.1; // 0.1 volume
           }
+          audioBufferRef.current = buffer;
+        } catch (error) {
+          console.error("Error creating notification sound:", error);
         }
       }
     }
@@ -75,25 +70,27 @@ export default function CallPatientPage() {
       await initializeAudio();
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
+      window.removeEventListener('keydown', handleFirstInteraction);
     };
     window.addEventListener('click', handleFirstInteraction);
     window.addEventListener('touchstart', handleFirstInteraction);
+    window.addEventListener('keydown', handleFirstInteraction);
+
 
     return () => {
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
+      window.removeEventListener('keydown', handleFirstInteraction);
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        // audioContextRef.current.close(); // Consider if you want to close context on unmount
+      }
     };
   }, []);
 
 
   useEffect(() => {
-    // Listener for recently called turns (either by professional OR by doctor)
     const qCalled = query(
       collection(db, "turns"),
-      // Using 'or' to listen for either 'called' or 'called_by_doctor'
-      // This requires a Firestore version that supports 'or' queries (v9.15.0+)
-      // and might require a composite index if not automatically created.
-      // Firestore often suggests these indexes in console errors.
       or(
         where("status", "==", "called"),
         where("status", "==", "called_by_doctor")
@@ -111,7 +108,7 @@ export default function CallPatientPage() {
 
       if (calledTurnsData.length > 0) {
         const latestCalledTurnId = calledTurnsData[0].id;
-        if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current) {
+        if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current && prevTopCalledTurnIdRef.current !== null) { // Play only on change, not initial load
           playNotificationSound();
         }
         prevTopCalledTurnIdRef.current = latestCalledTurnId;
@@ -124,7 +121,7 @@ export default function CallPatientPage() {
        if (error.message && error.message.includes("indexes?create_composite")) {
          toast({ 
             title: "Error de Configuración de Firestore", 
-            description: "Se requiere un índice para la consulta de turnos llamados (incluyendo médicos). Revise la consola del navegador para el enlace de creación.", 
+            description: "Se requiere un índice para la consulta de turnos llamados. Revise la consola del navegador para el enlace de creación.", 
             variant: "destructive",
             duration: 10000 
         });
@@ -134,9 +131,6 @@ export default function CallPatientPage() {
       setIsLoading(false);
     });
 
-    // Listener for upcoming turns (pending for professional)
-    // Note: This doesn't show patients 'waiting_doctor' as "upcoming" in this general queue.
-    // That list is specific to the /medicos page.
     const qPending = query(
       collection(db, "turns"),
       where("status", "==", "pending"),
@@ -152,6 +146,7 @@ export default function CallPatientPage() {
       setUpcomingTurns(turnsData);
     }, (error) => {
       console.error("Error fetching upcoming turns:", error);
+      // Add toast for pending turns error if needed
     });
     
     return () => {
@@ -165,6 +160,18 @@ export default function CallPatientPage() {
     const jsDate = date instanceof Timestamp ? date.toDate() : date;
     return formatDistanceToNowStrict(jsDate, { addSuffix: true, locale: es });
   };
+
+  const getPatientDisplayName = (patientName?: string, patientId?: string) => {
+    if (patientName && patientName.trim() !== "") {
+      return patientName;
+    }
+    if (patientId) {
+      // Attempt to extract a more readable ID part if patientName is missing
+      const idParts = patientId.split(" ");
+      return idParts.length > 1 ? `ID: ...${idParts[1].slice(-6, -3)}XXX` : `ID: ${patientId}`;
+    }
+    return "Paciente";
+  }
 
 
   if (isLoading && recentlyCalledTurns.length === 0) {
@@ -193,7 +200,7 @@ export default function CallPatientPage() {
                 <p className="text-sm text-muted-foreground">Aún no se ha llamado a ningún paciente.</p>
               </div>
             )}
-            <div className={`grid grid-cols-1 ${recentlyCalledTurns.length > 1 ? 'md:grid-cols-2' : ''} ${recentlyCalledTurns.length > 2 ? 'lg:grid-cols-2 xl:grid-cols-2' : ''} gap-4`}>
+            <div className={`grid grid-cols-1 ${recentlyCalledTurns.length > 1 ? 'md:grid-cols-2' : ''} ${recentlyCalledTurns.length > 2 ? 'xl:grid-cols-2' : ''} gap-4`}>
               {recentlyCalledTurns.map((turn, index) => (
                 <Card 
                   key={turn.id} 
@@ -211,13 +218,15 @@ export default function CallPatientPage() {
                         <Megaphone className={`h-10 w-10 sm:h-12 sm:w-12 ${index === 0 ? 'text-accent-foreground animate-pulse' : 'text-primary/80'}`} />
                       )}
                     </div>
-                     {turn.patientId && turn.turnNumber !== '---' && <p className={`text-xs sm:text-sm ${index === 0 ? 'text-accent-foreground/80' : 'text-muted-foreground'} mt-1`}>Paciente: ...{turn.patientId.slice(-6, -3)}XXX</p>}
                   </CardHeader>
                   <CardContent className="p-4 text-center">
                     <p className={`text-xl sm:text-2xl font-semibold mb-1 ${index === 0 ? 'text-accent-foreground' : 'text-foreground'}`}>
-                      {turn.module || (turn.status === 'called_by_doctor' ? "Consultorio no especificado" : "Módulo no especificado")}
+                        {getPatientDisplayName(turn.patientName, turn.patientId)}
                     </p>
-                    <p className={`text-md sm:text-lg ${index === 0 ? 'text-accent-foreground/90' : 'text-muted-foreground'}`}>
+                     <p className={`text-lg sm:text-xl ${index === 0 ? 'text-accent-foreground/90' : 'text-muted-foreground'}`}>
+                      {turn.module || (turn.status === 'called_by_doctor' ? "Consultorio" : "Módulo")}
+                    </p>
+                    <p className={`text-md sm:text-base ${index === 0 ? 'text-accent-foreground/80' : 'text-muted-foreground'}`}>
                       {turn.status === 'called_by_doctor' ? `Atención Médica (Origen: ${turn.service})` : turn.service}
                     </p>
                     {turn.calledAt && (
@@ -243,13 +252,15 @@ export default function CallPatientPage() {
             {upcomingTurns.length > 0 ? (
               <ul className="space-y-3">
                 {upcomingTurns.map((turn) => (
-                  <li key={turn.id} className="p-3 bg-secondary/30 rounded-lg shadow-sm flex justify-between items-center hover:bg-secondary/50 transition-colors">
-                    <div>
+                  <li key={turn.id} className="p-3 bg-secondary/30 rounded-lg shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center hover:bg-secondary/50 transition-colors">
+                    <div className="flex items-center mb-1 sm:mb-0">
                       <span className={`text-lg sm:text-xl font-medium ${turn.priority ? 'text-destructive' : 'text-secondary-foreground'}`}>{turn.turnNumber}</span>
                        {turn.priority && <span className="ml-2 text-xs bg-destructive/80 text-destructive-foreground px-2 py-0.5 rounded-full">Prioritario</span>}
                     </div>
-                    <span className="text-sm sm:text-base text-muted-foreground">{turn.service}</span>
-                    <span className="text-xs text-muted-foreground/80 hidden sm:inline"><CalendarClock className="inline h-3 w-3 mr-1"/> {getTimeAgo(turn.requestedAt)}</span>
+                    <div className="text-sm text-muted-foreground mb-1 sm:mb-0 sm:mx-2 flex-grow text-left sm:text-center">
+                        {getPatientDisplayName(turn.patientName, turn.patientId)} ({turn.service})
+                    </div>
+                    <span className="text-xs text-muted-foreground/80 self-start sm:self-center"><CalendarClock className="inline h-3 w-3 mr-1"/> {getTimeAgo(turn.requestedAt)}</span>
                   </li>
                 ))}
               </ul>
@@ -275,3 +286,5 @@ export default function CallPatientPage() {
     </main>
   );
 }
+
+    

@@ -71,7 +71,7 @@ export default function MedicosPage() {
   // Auth redirect
   useEffect(() => {
     if (!authLoading && !currentUser) {
-      router.replace("/login"); // Or a specific /medicos/login if you create one
+      router.replace("/login"); 
     }
   }, [currentUser, authLoading, router]);
 
@@ -86,13 +86,10 @@ export default function MedicosPage() {
     
     setIsLoading(true);
 
-    // Listener for patients waiting for a doctor (status 'waiting_doctor')
-    // These are patients who have completed "Facturación"
     const qWaiting = query(
       collection(db, "turns"), 
       where("status", "==", "waiting_doctor"),
-      // where("service", "==", "Facturación"), // Ensuring they came from Facturación
-      orderBy("completedAt", "asc") // Order by when they finished the previous step
+      orderBy("completedAt", "asc") 
     );
     const unsubscribeWaiting = onSnapshot(qWaiting, (querySnapshot) => {
       const turnsData: Turn[] = [];
@@ -116,14 +113,13 @@ export default function MedicosPage() {
       setIsLoading(false);
     });
     
-    // Listener for the currently called turn by this doctor at this consultorio
     let unsubscribeCalledByThisDoctorListener: (() => void) | null = null;
     if (currentUser && selectedConsultorio) {
         const qCalledByThisDoctor = query(
             collection(db, "turns"),
             where("status", "==", "called_by_doctor"),
             where("professionalId", "==", currentUser.uid),
-            where("module", "==", selectedConsultorio), // 'module' here stores the consultorio
+            where("module", "==", selectedConsultorio), 
             limit(1)
         );
 
@@ -149,9 +145,11 @@ export default function MedicosPage() {
 
   const filteredWaitingTurns = useMemo(() => {
     if (!searchTerm) return waitingTurns;
+    const lowerSearchTerm = searchTerm.toLowerCase();
     return waitingTurns.filter(turn => 
-      turn.turnNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      turn.patientId.toLowerCase().includes(searchTerm.toLowerCase())
+      turn.turnNumber.toLowerCase().includes(lowerSearchTerm) ||
+      (turn.patientId && turn.patientId.toLowerCase().includes(lowerSearchTerm)) ||
+      (turn.patientName && turn.patientName.toLowerCase().includes(lowerSearchTerm))
     );
   }, [waitingTurns, searchTerm]);
 
@@ -160,6 +158,17 @@ export default function MedicosPage() {
     const jsDate = date instanceof Timestamp ? date.toDate() : date;
     return formatDistanceToNowStrict(jsDate, { addSuffix: true, locale: es });
   };
+
+  const getPatientDisplayName = (patientName?: string, patientId?: string) => {
+    if (patientName && patientName.trim() !== "") {
+      return patientName;
+    }
+    if (patientId) {
+      const idParts = patientId.split(" ");
+      return idParts.length > 1 ? `ID: ...${idParts[1].slice(-6, -3)}XXX` : `ID: ${patientId}`;
+    }
+    return "Paciente";
+  }
 
   const callPatientByDoctor = async (patientTurn: Turn) => {
     if (!currentUser || !selectedConsultorio) {
@@ -175,12 +184,12 @@ export default function MedicosPage() {
       const turnRef = doc(db, "turns", patientTurn.id);
       await updateDoc(turnRef, {
         status: "called_by_doctor",
-        calledAt: serverTimestamp(), // Timestamp of doctor's call
-        module: selectedConsultorio, // Store consultorio in module field
-        professionalId: currentUser.uid, // Doctor's UID
+        calledAt: serverTimestamp(), 
+        module: selectedConsultorio, 
+        professionalId: currentUser.uid, 
         professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
-      toast({ title: "Paciente Llamado", description: `Llamando a ${patientTurn.turnNumber} al ${selectedConsultorio}.` });
+      toast({ title: "Paciente Llamado", description: `Llamando a ${getPatientDisplayName(patientTurn.patientName, patientTurn.patientId)} (${patientTurn.turnNumber}) al ${selectedConsultorio}.` });
     } catch (error) {
       console.error("Error calling patient by doctor: ", error);
       toast({ title: "Error", description: "No se pudo llamar al paciente.", variant: "destructive" });
@@ -211,7 +220,7 @@ export default function MedicosPage() {
     }
   };
 
-  if (authLoading || (!currentUser && !authLoading)) { 
+  if (authLoading || (!currentUser && !authLoading && !router.asPath.includes('/login'))) { 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -279,10 +288,10 @@ export default function MedicosPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-2xl text-green-700 flex items-center">
                     <PlayCircle className="mr-3 h-8 w-8 animate-pulse text-green-600" />
-                    Atendiendo Turno: {calledTurn.turnNumber}
+                    Atendiendo: {getPatientDisplayName(calledTurn.patientName, calledTurn.patientId)} ({calledTurn.turnNumber})
                   </CardTitle>
                    <CardDescription className="text-green-700/80">
-                    Paciente: ...{calledTurn.patientId.slice(-6, -3)}XXX {/* Masked Patient ID */}
+                     Turno: {calledTurn.turnNumber}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm space-y-1 pt-0 pb-3">
@@ -310,7 +319,7 @@ export default function MedicosPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
                 <Input 
                   type="text"
-                  placeholder="Buscar por turno o ID paciente..."
+                  placeholder="Buscar por turno, ID o nombre..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10 h-11 text-base"
@@ -338,8 +347,9 @@ export default function MedicosPage() {
                       <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start">
                         <div className="mb-3 sm:mb-0 flex-grow">
                           <p className={`text-xl font-semibold ${turn.priority ? 'text-orange-600' : 'text-blue-700'}`}>{turn.turnNumber}</p>
+                          <p className="text-base text-gray-700">{getPatientDisplayName(turn.patientName, turn.patientId)}</p>
                           <p className="text-sm text-gray-600">Servicio Origen: {turn.service}</p>
-                          <p className="text-xs text-gray-500/80">ID: ...{turn.patientId.slice(-6,-3)}XXX</p>
+                          
                           {turn.priority && (
                             <span className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-500/80 text-white">
                               <AlertTriangle className="h-3 w-3 mr-1" /> Prioridad (Origen)
@@ -349,7 +359,7 @@ export default function MedicosPage() {
                             Esperando desde: {getTimeAgo(turn.completedAt || turn.requestedAt)}
                           </p>
                         </div>
-                        <div className="sm:ml-4 flex-shrink-0">
+                        <div className="sm:ml-4 flex-shrink-0 self-center">
                            <AlertDialog>
                             <AlertDialogTrigger asChild>
                                <Button 
@@ -365,7 +375,7 @@ export default function MedicosPage() {
                               <AlertDialogHeader>
                                 <AlertDialogTitle>Confirmar Llamada</AlertDialogTitle>
                                 <AlertDialogDescription>
-                                  ¿Está seguro que desea llamar al paciente con el turno {turn.turnNumber} al consultorio {selectedConsultorio}?
+                                  ¿Está seguro que desea llamar a {getPatientDisplayName(turn.patientName, turn.patientId)} (turno {turn.turnNumber}) al consultorio {selectedConsultorio}?
                                   {!!calledTurn && <p className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</p>}
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
@@ -402,3 +412,5 @@ export default function MedicosPage() {
     </main>
   );
 }
+
+    

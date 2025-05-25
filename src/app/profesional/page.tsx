@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, runTransaction, limit } from "firebase/firestore"; // Added limit here
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, runTransaction, limit } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -107,7 +107,7 @@ export default function ProfessionalPage() {
     if (!currentUser || !selectedModule || !selectedService) {
         setIsLoading(false); 
         setPendingTurns([]); 
-        if (calledTurn) setCalledTurn(null); // Clear called turn if config changes
+        if (calledTurn) setCalledTurn(null); 
         return;
     }
     
@@ -142,7 +142,6 @@ export default function ProfessionalPage() {
       setIsLoading(false);
     });
 
-    // Listener for the currently called turn by this professional at this module
     let unsubscribeCalledTurnListener: (() => void) | null = null;
     if (currentUser && selectedModule) {
         const qCalledByThisProfessional = query(
@@ -157,11 +156,9 @@ export default function ProfessionalPage() {
             if (!querySnapshot.empty) {
                 const turnDoc = querySnapshot.docs[0];
                 const currentCalled = { id: turnDoc.id, ...turnDoc.data() } as Turn;
-                 // Only set if it's for the currently selected service
-                if (currentCalled.service === selectedService.label) {
+                if (selectedService && currentCalled.service === selectedService.label) {
                     setCalledTurn(currentCalled);
                 } else if (calledTurn?.id === currentCalled.id) {
-                    // If the service changed and this was the active turn, clear it.
                     setCalledTurn(null);
                 }
             } else {
@@ -179,7 +176,7 @@ export default function ProfessionalPage() {
         unsubscribeCalledTurnListener();
       }
     };
-  }, [currentUser, selectedModule, selectedService, toast, router, calledTurn?.id]); // Added calledTurn.id to dependencies
+  }, [currentUser, selectedModule, selectedService, toast, router, calledTurn?.id]); 
 
 
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
@@ -189,6 +186,17 @@ export default function ProfessionalPage() {
     return formatDistanceToNowStrict(jsDate, { addSuffix: true, locale: es });
   };
   
+  const getPatientDisplayName = (patientName?: string, patientId?: string) => {
+    if (patientName && patientName.trim() !== "") {
+      return patientName;
+    }
+    if (patientId) {
+      const idParts = patientId.split(" ");
+      return idParts.length > 1 ? `ID: ...${idParts[1].slice(-6, -3)}XXX` : `ID: ${patientId}`;
+    }
+    return "Paciente";
+  }
+
   const getNextTurnToCall = useCallback(() => {
     if (pendingTurns.length === 0) return null;
     return pendingTurns[0];
@@ -219,8 +227,7 @@ export default function ProfessionalPage() {
         professionalId: currentUser.uid,
         professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
-      // No optimistic update for setCalledTurn here, rely on the listener
-      toast({ title: "Paciente Llamado", description: `Llamando a ${nextTurn.turnNumber} (${selectedService.label}) desde ${selectedModule}.` });
+      toast({ title: "Paciente Llamado", description: `Llamando a ${getPatientDisplayName(nextTurn.patientName, nextTurn.patientId)} (${nextTurn.turnNumber}) para ${selectedService.label} desde ${selectedModule}.` });
     } catch (error) {
       console.error("Error updating document: ", error);
       toast({ title: "Error", description: "No se pudo llamar al paciente.", variant: "destructive" });
@@ -235,16 +242,17 @@ export default function ProfessionalPage() {
     try {
       const turnRef = doc(db, "turns", calledTurn.id);
       let updateData: Partial<Turn> = {
-        professionalId: currentUser.uid, // Ensure professionalId is set on finalization
+        professionalId: currentUser.uid, 
         professionalDisplayName: currentUser.displayName || currentUser.email,
-        module: selectedModule, // Ensure module is set
+        module: selectedModule, 
       };
 
+      let toastMessageAction = "completado";
+
       if (status === 'completed') {
-        // If the service is "Facturación", transition to "waiting_doctor"
-        // Otherwise, it's a final "completed"
         if (calledTurn.service === "Facturación") {
           updateData.status = 'waiting_doctor';
+          toastMessageAction = "listo para médico";
         } else {
           updateData.status = 'completed';
         }
@@ -252,12 +260,13 @@ export default function ProfessionalPage() {
       } else if (status === 'missed') {
         updateData.status = 'missed';
         updateData.missedAt = serverTimestamp();
+        toastMessageAction = "no se presentó";
       }
       
       await updateDoc(turnRef, updateData);
 
-      toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${status === 'completed' ? (calledTurn.service === "Facturación" ? "listo para médico" : "completado") : 'no se presentó'}.`});
-      setCalledTurn(null); // Clear the locally active turn
+      toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${toastMessageAction}.`});
+      setCalledTurn(null); 
     } catch (error) {
       console.error("Error updating turn status: ", error);
       toast({ title: "Error", description: "No se pudo actualizar el estado del turno.", variant: "destructive" });
@@ -266,7 +275,7 @@ export default function ProfessionalPage() {
   
   const nextTurnToDisplayInDialog = getNextTurnToCall();
 
-  if (authLoading || (!currentUser && !authLoading)) { 
+  if (authLoading || (!currentUser && !authLoading && !router.asPath.includes('/login'))) { 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -383,10 +392,10 @@ export default function ProfessionalPage() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-2xl text-accent-foreground flex items-center">
                     <PlayCircle className="mr-3 h-8 w-8 animate-pulse" />
-                    Atendiendo Turno: {calledTurn.turnNumber}
+                     Atendiendo: {getPatientDisplayName(calledTurn.patientName, calledTurn.patientId)} ({calledTurn.turnNumber})
                   </CardTitle>
                    <CardDescription className="text-accent-foreground/80">
-                    Paciente: ...{calledTurn.patientId.slice(-6, -3)}XXX {/* Masked Patient ID */}
+                     Turno: {calledTurn.turnNumber}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm space-y-1 pt-0 pb-3">
@@ -428,7 +437,7 @@ export default function ProfessionalPage() {
                     <AlertDialogTitle>Confirmar Llamada</AlertDialogTitle>
                     <AlertDialogDescription>
                       {nextTurnToDisplayInDialog ? 
-                       `¿Está seguro que desea llamar al paciente con el turno ${nextTurnToDisplayInDialog.turnNumber} (${nextTurnToDisplayInDialog.service}) desde ${selectedModule}?`
+                       `¿Está seguro que desea llamar a ${getPatientDisplayName(nextTurnToDisplayInDialog.patientName, nextTurnToDisplayInDialog.patientId)} (${nextTurnToDisplayInDialog.turnNumber}) para ${nextTurnToDisplayInDialog.service} desde ${selectedModule}?`
                        : `No hay pacientes para llamar para ${selectedService.label}.`}
                        {!!calledTurn && <p className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</p>}
                        {(!selectedModule || !selectedService) && <p className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</p>}
@@ -467,8 +476,8 @@ export default function ProfessionalPage() {
                       <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center">
                         <div className="mb-2 sm:mb-0">
                           <p className={`text-lg font-semibold ${turn.priority ? 'text-destructive' : 'text-primary'}`}>{turn.turnNumber}</p>
-                          <p className="text-sm text-muted-foreground">{turn.service}</p>
-                          <p className="text-xs text-muted-foreground/80">ID: ...{turn.patientId.slice(-6,-3)}XXX</p>
+                          <p className="text-sm text-foreground">{getPatientDisplayName(turn.patientName, turn.patientId)}</p>
+                          <p className="text-xs text-muted-foreground/80">Servicio: {turn.service}</p>
                         </div>
                         <div className="text-left sm:text-right w-full sm:w-auto">
                           {turn.priority && (
@@ -504,3 +513,5 @@ export default function ProfessionalPage() {
     </main>
   );
 }
+
+    
