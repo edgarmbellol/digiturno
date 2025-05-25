@@ -5,14 +5,15 @@ export interface Turn {
   id: string; // Firestore document ID
   turnNumber: string; // Displayable turn number (e.g., F-101, C-055)
   service: string; // Label del servicio, ej. "Facturación"
-  patientId: string;
+  patientId: string; // Cedula del paciente, ej CC 12345
+  patientName?: string; // Nombre completo del paciente
   priority: boolean;
   requestedAt: Timestamp; // Firestore Timestamp for server-side consistency
-  status: 
-    | 'pending' 
-    | 'called' 
+  status:
+    | 'pending'
+    | 'called'
     | 'completed' // Para servicios como facturación, este es el estado final de esa etapa
-    | 'missed' 
+    | 'missed'
     | 'waiting_doctor' // Paciente completó facturación, esperando ser llamado por médico
     | 'called_by_doctor' // Médico ha llamado al paciente
     | 'completed_by_doctor' // Médico completó la consulta

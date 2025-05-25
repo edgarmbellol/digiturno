@@ -24,15 +24,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX } from "lucide-react";
+import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { db } from "@/lib/firebase"; 
+import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import type { Turn } from '@/types/turn'; 
+import type { Turn } from '@/types/turn';
 import { useToast } from "@/hooks/use-toast";
-import { AVAILABLE_SERVICES } from "@/lib/services"; // Import shared services
+import { AVAILABLE_SERVICES } from "@/lib/services";
 
-const specialConditions: { name: keyof FormValues; label: string; icon: LucideIcon }[] = [
+const specialConditions: { name: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">; label: string; icon: LucideIcon }[] = [
   { name: "isSenior", label: "Adulto Mayor", icon: UserCheck },
   { name: "isPregnant", label: "Gestante", icon: UserCheck },
   { name: "isDisabled", label: "Discapacitado", icon: UserCheck },
@@ -42,6 +42,7 @@ const specialConditions: { name: keyof FormValues; label: string; icon: LucideIc
 const formSchema = z.object({
   service: z.string({ required_error: "Por favor seleccione un servicio." }).min(1, "Por favor seleccione un servicio."),
   idNumber: z.string().min(1, "El número de cédula es requerido.").regex(/^[0-9a-zA-Z]+$/, "Solo se permiten números y letras."),
+  patientName: z.string().min(1, "El nombre del paciente es requerido.").max(100, "El nombre es demasiado largo."),
   isSenior: z.boolean().default(false),
   isPregnant: z.boolean().default(false),
   isDisabled: z.boolean().default(false),
@@ -56,7 +57,7 @@ const formSchema = z.object({
     return true;
 }, {
     message: "Seleccione 'Ninguna' o una condición específica. Si no aplica ninguna, 'Ninguna' debe estar marcada.",
-    path: ["isNone"], 
+    path: ["isNone"],
 });
 
 
@@ -71,9 +72,13 @@ export default function TurnForm() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submittedTurnNumber, setSubmittedTurnNumber] = useState<string | null>(null);
   const [submittedServiceLabel, setSubmittedServiceLabel] = useState<string | null>(null);
+  const [submittedPatientName, setSubmittedPatientName] = useState<string | null>(null);
   const [submittedIdNumber, setSubmittedIdNumber] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
+
+  const [isFetchingPatientName, setIsFetchingPatientName] = useState(false);
+  const [showManualNameInput, setShowManualNameInput] = useState(false);
 
 
   const form = useForm<FormValues>({
@@ -81,6 +86,7 @@ export default function TurnForm() {
     defaultValues: {
       service: "",
       idNumber: "",
+      patientName: "",
       isSenior: false,
       isPregnant: false,
       isDisabled: false,
@@ -88,11 +94,12 @@ export default function TurnForm() {
     },
   });
 
-  const { watch, setValue, reset, trigger, getValues } = form;
+  const { watch, setValue, reset, trigger, getValues, control } = form;
   const watchIsSenior = watch("isSenior");
   const watchIsPregnant = watch("isPregnant");
   const watchIsDisabled = watch("isDisabled");
   const watchIsNone = watch("isNone");
+  const watchIdNumber = watch("idNumber");
 
   useEffect(() => {
     const currentIsNone = getValues("isNone");
@@ -100,7 +107,7 @@ export default function TurnForm() {
         if (getValues("isSenior")) setValue("isSenior", false, { shouldValidate: false });
         if (getValues("isPregnant")) setValue("isPregnant", false, { shouldValidate: false });
         if (getValues("isDisabled")) setValue("isDisabled", false, { shouldValidate: false });
-        trigger(); // Validate the whole form after programmatic changes
+        trigger(["isSenior", "isPregnant", "isDisabled", "isNone"]);
     }
   }, [watchIsNone, setValue, trigger, getValues]);
 
@@ -109,14 +116,77 @@ export default function TurnForm() {
     const currentIsNone = getValues("isNone");
 
     if (anyPriorityChecked && currentIsNone) {
-        setValue("isNone", false, { shouldValidate: false });
-        trigger();
+        setValue("isNone", false, { shouldValidate: true });
     } else if (!anyPriorityChecked && !currentIsNone) {
-        setValue("isNone", true, { shouldValidate: false });
-        trigger();
+        setValue("isNone", true, { shouldValidate: true });
     }
   }, [watchIsSenior, watchIsPregnant, watchIsDisabled, setValue, trigger, getValues]);
 
+
+  const fetchPatientNameById = async (idDocument: string) => {
+    if (!idDocument.trim()) {
+      setValue("patientName", "");
+      setShowManualNameInput(false); // Hide if ID is cleared
+      return;
+    }
+    setIsFetchingPatientName(true);
+    setShowManualNameInput(false); // Reset manual input visibility
+    setValue("patientName", "", { shouldValidate: true }); // Clear previous name
+
+    try {
+      const response = await fetch('https://hospitalsopo.comsopo.org/api/info_paciente', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ documento: idDocument }),
+      });
+
+      if (!response.ok) {
+        // This could be a 404 (not found) or other server error
+        const errorData = await response.json().catch(() => ({})); // Try to parse error
+        console.error("API error response:", errorData);
+        toast({
+          title: "Paciente No Encontrado",
+          description: `No se encontró paciente con cédula ${idDocument}. Por favor, ingrese el nombre manualmente. (Error: ${response.status})`,
+          variant: "default",
+          duration: 7000,
+        });
+        setShowManualNameInput(true);
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data && data.nombre_completo) {
+        setValue("patientName", data.nombre_completo, { shouldValidate: true });
+        toast({
+          title: "Paciente Encontrado",
+          description: `Nombre: ${data.nombre_completo}`,
+        });
+        setShowManualNameInput(false); // Name found, no need for manual input
+      } else {
+        toast({
+          title: "Nombre No Encontrado",
+          description: "La cédula fue encontrada pero no se devolvió un nombre. Por favor, ingrese el nombre manualmente.",
+          variant: "default",
+          duration: 7000,
+        });
+        setShowManualNameInput(true);
+      }
+    } catch (error) {
+      console.error("Error fetching patient name:", error);
+      toast({
+        title: "Error de Conexión",
+        description: "No se pudo verificar la cédula. Por favor, ingrese el nombre manualmente. Verifique la consola para más detalles (CORS o error de red).",
+        variant: "destructive",
+        duration: 7000,
+      });
+      setShowManualNameInput(true);
+    } finally {
+      setIsFetchingPatientName(false);
+    }
+  };
 
   async function onSubmit(data: FormValues) {
     setIsSubmitting(true);
@@ -135,8 +205,9 @@ export default function TurnForm() {
 
       const newTurnData: Omit<Turn, 'id' | 'requestedAt'> & { requestedAt: any } = {
         turnNumber: newTurnNumber,
-        service: selectedServiceInfo.label, // Save the label of the service
+        service: selectedServiceInfo.label,
         patientId: `CC ${data.idNumber}`,
+        patientName: data.patientName,
         priority: priority,
         status: 'pending',
         requestedAt: serverTimestamp(),
@@ -147,8 +218,9 @@ export default function TurnForm() {
       setSubmittedTurnNumber(newTurnNumber);
       setSubmittedServiceLabel(selectedServiceInfo.label);
       setSubmittedIdNumber(data.idNumber);
+      setSubmittedPatientName(data.patientName);
       setIsSubmitted(true);
-      toast({ title: "Turno Registrado", description: `Tu turno ${newTurnNumber} ha sido creado.` });
+      toast({ title: "Turno Registrado", description: `Tu turno ${newTurnNumber} para ${data.patientName} ha sido creado.` });
     } catch (error) {
       console.error("Error adding document: ", error);
       toast({ title: "Error", description: "No se pudo registrar el turno. Intente de nuevo.", variant: "destructive" });
@@ -160,9 +232,12 @@ export default function TurnForm() {
   function handleNewTurn() {
     setIsSubmitted(false);
     setSubmittedTurnNumber(null);
+    setSubmittedPatientName(null);
+    setShowManualNameInput(false);
     reset({
         service: "",
         idNumber: "",
+        patientName: "",
         isSenior: false,
         isPregnant: false,
         isDisabled: false,
@@ -170,7 +245,7 @@ export default function TurnForm() {
     });
   }
 
-  if (isSubmitted && submittedTurnNumber && submittedServiceLabel && submittedIdNumber) {
+  if (isSubmitted && submittedTurnNumber && submittedServiceLabel && submittedIdNumber && submittedPatientName) {
     return (
       <Card className="w-full max-w-lg shadow-xl transform transition-all duration-300">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
@@ -184,12 +259,16 @@ export default function TurnForm() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm p-6">
           <div className="flex justify-between border-b pb-2">
-            <span className="font-medium text-muted-foreground">Servicio:</span>
-            <span className="font-semibold text-foreground">{submittedServiceLabel}</span>
+            <span className="font-medium text-muted-foreground">Paciente:</span>
+            <span className="font-semibold text-foreground">{submittedPatientName}</span>
           </div>
           <div className="flex justify-between border-b pb-2">
             <span className="font-medium text-muted-foreground">Identificación:</span>
             <span className="font-semibold text-foreground">CC {submittedIdNumber}</span>
+          </div>
+          <div className="flex justify-between border-b pb-2">
+            <span className="font-medium text-muted-foreground">Servicio:</span>
+            <span className="font-semibold text-foreground">{submittedServiceLabel}</span>
           </div>
            <p className="text-center text-muted-foreground pt-4">
              Por favor, esté atento a la pantalla. Pronto será llamado.
@@ -217,7 +296,7 @@ export default function TurnForm() {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <FormField
-              control={form.control}
+              control={control}
               name="service"
               render={({ field }) => (
                 <FormItem>
@@ -249,18 +328,54 @@ export default function TurnForm() {
             />
 
             <FormField
-              control={form.control}
+              control={control}
               name="idNumber"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="text-base font-semibold">Número de Cédula/Identificación</FormLabel>
                   <FormControl>
-                    <Input placeholder="Ej: 1234567890" {...field} className="text-base h-12" />
+                    <div className="flex items-center space-x-2">
+                      <Input
+                        placeholder="Ej: 1234567890"
+                        {...field}
+                        className="text-base h-12"
+                        onBlur={(e) => {
+                          field.onBlur(); // important to keep react-hook-form's own blur handling
+                          fetchPatientNameById(e.target.value);
+                        }}
+                      />
+                      {isFetchingPatientName && <Loader2 className="h-6 w-6 animate-spin text-primary" />}
+                    </div>
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
+            <FormField
+              control={control}
+              name="patientName"
+              render={({ field }) => (
+                <FormItem className={(showManualNameInput || getValues("patientName")) ? "block" : "hidden"}>
+                  <FormLabel className="text-base font-semibold">Nombre Completo del Paciente</FormLabel>
+                  <FormControl>
+                     <Input
+                        placeholder="Ingrese nombre completo"
+                        {...field}
+                        className="text-base h-12"
+                        disabled={isFetchingPatientName || (!showManualNameInput && !!getValues("patientName"))}
+                      />
+                  </FormControl>
+                   {showManualNameInput && !isFetchingPatientName && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      No se encontró el nombre, por favor ingréselo.
+                    </p>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
 
             <FormItem>
               <FormLabel className="text-base font-semibold">Condiciones Especiales (Opcional)</FormLabel>
@@ -268,8 +383,8 @@ export default function TurnForm() {
                 {specialConditions.map((item) => (
                   <FormField
                     key={item.name}
-                    control={form.control}
-                    name={item.name as keyof FormValues} // item.name must be a key of FormValues
+                    control={control}
+                    name={item.name}
                     render={({ field }) => (
                       <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
@@ -279,10 +394,9 @@ export default function TurnForm() {
                       >
                         <FormControl>
                           <Checkbox
-                            checked={field.value as boolean}
+                            checked={field.value}
                             onCheckedChange={(checkedState) => {
                                 field.onChange(checkedState);
-                                trigger(item.name as keyof FormValues); 
                                 trigger(); // validate all form
                             }}
                             aria-label={item.label}
@@ -305,7 +419,7 @@ export default function TurnForm() {
                <FormMessage>{form.formState.errors.isNone?.message}</FormMessage>
             </FormItem>
 
-            <Button type="submit" className="w-full text-lg py-6 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting}>
+            <Button type="submit" className="w-full text-lg py-6 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting || isFetchingPatientName}>
               {isSubmitting ? "Registrando..." : "Solicitar Turno"}
               {!isSubmitting && <CheckCircle2 className="ml-2 h-6 w-6" />}
             </Button>
