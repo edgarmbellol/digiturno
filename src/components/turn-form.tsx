@@ -48,19 +48,19 @@ const formSchema = z.object({
   isDisabled: z.boolean().default(false),
   isNone: z.boolean().default(true),
 }).refine(data => {
-    const priorityConditionsSelected = data.isSenior || data.isPregnant || data.isDisabled;
-    if (data.isNone && priorityConditionsSelected) {
-        return false; // "Ninguna" no puede estar marcada si hay otra condición marcada
+    const { isNone, isSenior, isPregnant, isDisabled } = data;
+    const priorityConditions = [isSenior, isPregnant, isDisabled];
+    const selectedPriorityCount = priorityConditions.filter(Boolean).length;
+
+    if (isNone) {
+        // If "None" is selected, no other priority condition should be selected.
+        return selectedPriorityCount === 0;
+    } else {
+        // If "None" is NOT selected, exactly one priority condition must be selected.
+        return selectedPriorityCount === 1;
     }
-    if (!data.isNone && !priorityConditionsSelected) {
-      return false; // Si "Ninguna" no está marcada, al menos una condición debe estarlo
-    }
-    return true;
 }, {
-    // Este mensaje se aplicará al primer campo del schema si la validación a nivel de objeto falla.
-    // Para mostrarlo bajo el grupo de checkboxes, tendrías que manejar el error manualmente.
-    // O se puede asignar a un path específico como 'isNone' si es el más relevante.
-    message: "Seleccione 'Ninguna' o al menos una condición específica. Si no aplica ninguna, solo 'Ninguna' debe estar marcada.",
+    message: "Seleccione 'Ninguna' o solo una condición de prioridad específica.",
     path: ["isNone"], 
 });
 
@@ -98,12 +98,9 @@ export default function TurnForm() {
     },
   });
 
-  const { reset, control, setValue, getValues, watch, trigger } = form;
+  const { reset, control, setValue, getValues, trigger, watch } = form;
   
-  const watchIsNone = watch("isNone");
-  const watchIsSenior = watch("isSenior");
-  const watchIsPregnant = watch("isPregnant");
-  const watchIsDisabled = watch("isDisabled");
+  const watchIsNone = watch("isNone"); // Keep this for visual styling if needed, but not for disabling
 
   const fetchPatientNameById = async (idDocument: string) => {
     if (!idDocument.trim()) {
@@ -376,7 +373,7 @@ export default function TurnForm() {
 
 
             <FormItem>
-              <FormLabel className="text-base font-semibold">Condiciones Especiales (Opcional)</FormLabel>
+              <FormLabel className="text-base font-semibold">Condiciones Especiales</FormLabel>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 {specialConditions.map((item) => (
                   <FormField
@@ -386,32 +383,38 @@ export default function TurnForm() {
                     render={({ field }) => (
                       <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
-                                    ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}
-                                    ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' // Removed cursor-not-allowed
-                                    }`}
+                                    ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}`}
                       >
                         <FormControl>
                           <Checkbox
                             checked={field.value}
                             onCheckedChange={(checkedValue) => {
                               const isChecking = Boolean(checkedValue);
-                              field.onChange(isChecking); // Update this field's value
-
+                              
                               if (item.name === "isNone") {
+                                setValue("isNone", isChecking, { shouldValidate: false });
                                 if (isChecking) {
                                   setValue("isSenior", false, { shouldValidate: false });
                                   setValue("isPregnant", false, { shouldValidate: false });
                                   setValue("isDisabled", false, { shouldValidate: false });
                                 }
-                              } else { // This is a priority checkbox
+                              } else { // One of the priority conditions
+                                const currentFieldName = item.name as "isSenior" | "isPregnant" | "isDisabled";
+                                setValue(currentFieldName, isChecking, { shouldValidate: false });
+                                
                                 if (isChecking) {
                                   setValue("isNone", false, { shouldValidate: false });
+                                  // Uncheck other priority conditions
+                                  if (currentFieldName !== "isSenior") setValue("isSenior", false, { shouldValidate: false });
+                                  if (currentFieldName !== "isPregnant") setValue("isPregnant", false, { shouldValidate: false });
+                                  if (currentFieldName !== "isDisabled") setValue("isDisabled", false, { shouldValidate: false });
                                 } else {
-                                  // Priority item is unchecked. If no other priority items are checked, "isNone" must be true.
+                                  // If this priority is being unchecked, check if any other priority is active.
+                                  // If not, 'isNone' must become true.
                                   const anyOtherPriorityActive =
-                                    (item.name === "isSenior" ? false : getValues("isSenior")) ||
-                                    (item.name === "isPregnant" ? false : getValues("isPregnant")) ||
-                                    (item.name === "isDisabled" ? false : getValues("isDisabled"));
+                                    (currentFieldName === "isSenior" ? false : getValues("isSenior")) ||
+                                    (currentFieldName === "isPregnant" ? false : getValues("isPregnant")) ||
+                                    (currentFieldName === "isDisabled" ? false : getValues("isDisabled"));
                                   if (!anyOtherPriorityActive) {
                                     setValue("isNone", true, { shouldValidate: false });
                                   }
@@ -421,14 +424,12 @@ export default function TurnForm() {
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                            // Removed disabled prop from here
                           />
                         </FormControl>
-                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'} ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' }`} />
+                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} />
                         <FormLabel
                           htmlFor={field.name} 
-                          className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}
-                           ${(item.name !== "isNone" && watchIsNone) ? 'opacity-50' : '' }`} // Removed cursor-not-allowed
+                          className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}`}
                         >
                           {item.label}
                         </FormLabel>
@@ -451,3 +452,5 @@ export default function TurnForm() {
     </Card>
   );
 }
+
+    
