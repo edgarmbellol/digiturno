@@ -21,6 +21,7 @@ export default function CallPatientPage() {
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
   const prevTopCalledTurnIdRef = useRef<string | null>(null);
+  const announcementTimeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const beepBufferRef = useRef<AudioBuffer | null>(null);
@@ -96,12 +97,15 @@ export default function CallPatientPage() {
     return () => {
       // console.log("CallPatientPage: Limpiando useEffect de inicialización de audio.");
       clearTimeout(interactionTimeoutId);
+      if (announcementTimeoutIdRef.current) {
+        clearTimeout(announcementTimeoutIdRef.current);
+      }
+      if (typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel(); // Detener cualquier anuncio en curso al desmontar
+      }
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
       window.removeEventListener('keydown', handleFirstInteraction);
-      if (typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel();
-      }
       audioContextRef.current?.close().catch(e => console.error("Error cerrando AudioContext", e));
     };
   }, [toast]);
@@ -169,7 +173,12 @@ export default function CallPatientPage() {
           
           // console.log("Preparando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
 
-          setTimeout(() => {
+          // Cancelar cualquier timeout de anuncio anterior si llega uno nuevo muy rápido
+          if (announcementTimeoutIdRef.current) {
+            clearTimeout(announcementTimeoutIdRef.current);
+          }
+
+          announcementTimeoutIdRef.current = setTimeout(() => {
             // console.log("Dentro de setTimeout - Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
             if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
                  console.warn("Anuncio de voz omitido: El contexto de audio principal no está activo. Se requiere interacción del usuario.");
@@ -182,12 +191,14 @@ export default function CallPatientPage() {
                 console.error("Error al pronunciar el anuncio:", err);
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
               });
-          }, 300);
-          prevTopCalledTurnIdRef.current = latestCalledTurnId;
+          }, 300); // Ligero retraso para permitir que el pitido suene primero o para evitar ráfagas
+          prevTopCalledTurnIdRef.current = latestCalledTurnId; // Actualizar el ID del último turno anunciado
         }
       } else {
         // console.log("Firestore: No hay turnos llamados actualmente.");
-        prevTopCalledTurnIdRef.current = null;
+        // No es necesario cambiar prevTopCalledTurnIdRef.current a null aquí,
+        // ya que si antes había un turno y ahora no hay, no queremos que el próximo
+        // turno que aparezca se considere "no nuevo".
       }
       setRecentlyCalledTurns(calledTurnsData);
       if (isLoading) setIsLoading(false);
@@ -228,7 +239,7 @@ export default function CallPatientPage() {
       unsubscribeCalled();
       unsubscribePending();
     };
-  }, [toast]); 
+  }, [toast]); // isLoading ya no es necesario como dependencia aquí
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -244,10 +255,11 @@ export default function CallPatientPage() {
       const idParts = patientId.split(" ");
       const lastPart = idParts[idParts.length - 1];
       if (lastPart && lastPart.length > 3) {
-        const prefix = idParts.slice(0, -1).join(" ") || (patientId.startsWith("CC") ? "CC" : "ID");
+        // Tomar el prefijo (ej. "CC") y los últimos 3 dígitos del ID.
+        const prefix = idParts.length > 1 ? idParts.slice(0, -1).join(" ") : (patientId.startsWith("CC") ? "CC" : "ID");
         return `${prefix} ...${lastPart.slice(-3)}`;
       }
-      return patientId;
+      return patientId; // fallback si el ID es muy corto o no tiene el formato esperado
     }
     return "Paciente";
   }
@@ -386,3 +398,4 @@ export default function CallPatientPage() {
     </main>
   );
 }
+

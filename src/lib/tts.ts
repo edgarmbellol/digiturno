@@ -11,10 +11,7 @@ export function speakText(text: string, lang: string = 'es-ES'): Promise<void> {
   return new Promise((resolve, reject) => {
     // console.log('speakText: Intentando hablar:', `"${text}"`, 'Idioma:', lang);
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      if (window.speechSynthesis.speaking) {
-        // console.log('speakText: SpeechSynthesis ya está hablando, cancelando habla anterior.');
-        window.speechSynthesis.cancel(); // Detiene cualquier habla en curso
-      }
+      // window.speechSynthesis.cancel(); // Eliminado: No cancelar incondicionalmente aquí
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
@@ -58,6 +55,7 @@ export function speakText(text: string, lang: string = 'es-ES'): Promise<void> {
                     break;
                 case 'canceled':
                     // console.log("speakText: Utterance.onerror - El habla fue cancelada (event.error: canceled).");
+                    // Si se cancela, se considera una forma de "finalización" exitosa en este contexto.
                     resolve(); 
                     return;
                 default:
@@ -69,6 +67,7 @@ export function speakText(text: string, lang: string = 'es-ES'): Promise<void> {
       };
       
       try {
+        // console.log('speakText: Llamando a window.speechSynthesis.speak()');
         window.speechSynthesis.speak(utterance);
       } catch (e: any) {
         console.error("speakText: Error directo al llamar a window.speechSynthesis.speak:", e);
@@ -82,3 +81,4 @@ export function speakText(text: string, lang: string = 'es-ES'): Promise<void> {
     }
   });
 }
+
