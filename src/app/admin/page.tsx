@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { auth, db } from "@/lib/firebase";
 import { signOut, createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { collection, query, where, onSnapshot, Timestamp, or } from "firebase/firestore";
-import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, ClockWarning, UserList } from "lucide-react";
+import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { Turn } from "@/types/turn";
 import { formatDistanceToNowStrict, intervalToDuration } from 'date-fns';
@@ -311,7 +311,7 @@ export default function AdminPage() {
         <Card className="w-full shadow-xl border-2 border-destructive/50">
           <CardHeader className="bg-destructive/10 text-destructive p-6 rounded-t-lg">
             <div className="flex items-center gap-3">
-              <ClockWarning className="h-10 w-10" />
+              <AlarmClock className="h-10 w-10" />
               <div>
                 <CardTitle className="text-2xl font-bold">Pacientes con Espera Prolongada</CardTitle>
                 <CardDescription className="text-destructive/80 pt-1">
@@ -339,8 +339,8 @@ export default function AdminPage() {
                       <div className="text-right mt-2 sm:mt-0">
                         <p className="text-lg font-bold text-destructive">{calculateDynamicWaitTime(turn, turn.waitType)}</p>
                         <p className="text-xs text-muted-foreground">
-                          {turn.waitType === 'ventanilla' ? `Solicitado: ${formatDistanceToNowStrict(turn.requestedAt.toDate(), { addSuffix: true, locale: es })}` 
-                                                          : `Facturación Completada: ${formatDistanceToNowStrict(turn.completedAt!.toDate(), { addSuffix: true, locale: es })}`}
+                          {turn.waitType === 'ventanilla' && turn.requestedAt ? `Solicitado: ${formatDistanceToNowStrict(turn.requestedAt.toDate(), { addSuffix: true, locale: es })}` 
+                                                          : (turn.completedAt ? `Facturación Completada: ${formatDistanceToNowStrict(turn.completedAt.toDate(), { addSuffix: true, locale: es })}` : '')}
                         </p>
                       </div>
                     </div>
@@ -358,4 +358,3 @@ export default function AdminPage() {
     </main>
   );
 }
-
