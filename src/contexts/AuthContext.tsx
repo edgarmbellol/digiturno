@@ -20,11 +20,29 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setIsLoading(false);
-    });
-    return () => unsubscribe();
+    console.log("AuthProvider: useEffect for onAuthStateChanged mounting.");
+    const unsubscribe = onAuthStateChanged(auth, 
+      (user) => {
+        try {
+          console.log("AuthProvider: onAuthStateChanged callback fired. User:", user ? user.uid : 'null');
+          setCurrentUser(user);
+        } catch (error) {
+          console.error("AuthProvider: Error in onAuthStateChanged callback (setting user):", error);
+        } finally {
+          console.log("AuthProvider: onAuthStateChanged finally block, setting isLoading to false.");
+          setIsLoading(false);
+        }
+      },
+      (error) => {
+        console.error("AuthProvider: Error with onAuthStateChanged listener itself:", error);
+        setIsLoading(false); // Ensure loading state is unset even if listener fails
+      }
+    );
+
+    return () => {
+      console.log("AuthProvider: useEffect for onAuthStateChanged unmounting.");
+      unsubscribe();
+    };
   }, []);
 
   if (isLoading) {
