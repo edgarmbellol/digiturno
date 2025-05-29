@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import Image from "next/image"; // Import Image
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,8 +22,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
-import { db, auth } from "@/lib/firebase"; // Import auth
-import { signOut } from "firebase/auth"; // Import signOut
+import { db, auth } from "@/lib/firebase"; 
+import { signOut } from "firebase/auth"; 
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,7 +44,6 @@ export default function MedicosPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Consultorio selection
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedConsultorio = localStorage.getItem(CONSULTORIO_STORAGE_KEY);
@@ -71,14 +71,12 @@ export default function MedicosPage() {
     toast({ title: "Consultorio Deseleccionado", description: "Por favor, seleccione un consultorio para continuar." });
   }
 
-  // Auth redirect
   useEffect(() => {
     if (!authLoading && !currentUser) {
       router.replace("/login"); 
     }
   }, [currentUser, authLoading, router]);
 
-  // Firestore listeners
   useEffect(() => {
     if (!currentUser || !selectedConsultorio) {
         setIsLoading(false); 
@@ -248,6 +246,9 @@ export default function MedicosPage() {
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-blue-500/10 to-background">
         <Card className="w-full max-w-lg shadow-xl">
           <CardHeader className="bg-blue-600 text-white p-6 rounded-t-lg">
+            <div className="flex flex-col items-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+            </div>
             <Hospital className="h-10 w-10 mx-auto mb-3" />
             <CardTitle className="text-2xl font-bold text-center">Seleccionar Consultorio</CardTitle>
             <CardDescription className="text-center text-blue-100 pt-1">
@@ -267,6 +268,11 @@ export default function MedicosPage() {
             </Select>
             <p className="text-xs text-muted-foreground text-center">Esta selección se recordará para esta sesión.</p>
           </CardContent>
+           <CardFooter className="flex flex-col sm:flex-row gap-2 p-6 justify-center">
+            <Button variant="outline" onClick={handleLogout} className="w-full sm:w-auto">
+              <LogOut className="mr-2 h-4 w-4" /> Cerrar Sesión
+            </Button>
+          </CardFooter>
         </Card>
       </main>
     );
@@ -277,6 +283,9 @@ export default function MedicosPage() {
       <div className="w-full max-w-6xl space-y-8">
         <Card className="shadow-xl">
           <CardHeader className="bg-blue-600 text-white rounded-t-lg p-6">
+            <div className="flex justify-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} />
+            </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between">
               <div>
                 <CardTitle className="text-3xl font-bold flex items-center"><Stethoscope className="mr-3 h-8 w-8"/>Panel Médico</CardTitle>
@@ -398,7 +407,7 @@ export default function MedicosPage() {
                                 <AlertDialogDescription>
                                   {`¿Está seguro que desea llamar a ${getPatientDisplayName(turn.patientName, turn.patientId)} (turno ${turn.turnNumber}) al consultorio ${selectedConsultorio}?`}
                                 
-                                {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
+                                 {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
@@ -434,6 +443,4 @@ export default function MedicosPage() {
     </main>
   );
 }
-    
-
     

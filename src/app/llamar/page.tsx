@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Image from "next/image"; // Import Image
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
 import type { Turn } from '@/types/turn';
@@ -43,7 +44,7 @@ export default function CallPatientPage() {
         const data = buffer.getChannelData(0);
         const frequency = 880;
         for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; // Volumen bajo para el beep
+          data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; 
         }
         beepBufferRef.current = buffer;
         // console.log("AudioContext y Beep Buffer creados. Estado inicial del AudioContext:", context.state);
@@ -101,7 +102,7 @@ export default function CallPatientPage() {
         clearTimeout(announcementTimeoutIdRef.current);
       }
       if (typeof window !== 'undefined' && window.speechSynthesis && window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel(); // Detener cualquier anuncio en curso al desmontar
+        window.speechSynthesis.cancel(); 
       }
       window.removeEventListener('click', handleFirstInteraction);
       window.removeEventListener('touchstart', handleFirstInteraction);
@@ -173,7 +174,6 @@ export default function CallPatientPage() {
           
           // console.log("Preparando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
 
-          // Cancelar cualquier timeout de anuncio anterior si llega uno nuevo muy rápido
           if (announcementTimeoutIdRef.current) {
             clearTimeout(announcementTimeoutIdRef.current);
           }
@@ -191,14 +191,11 @@ export default function CallPatientPage() {
                 console.error("Error al pronunciar el anuncio:", err);
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
               });
-          }, 300); // Ligero retraso para permitir que el pitido suene primero o para evitar ráfagas
-          prevTopCalledTurnIdRef.current = latestCalledTurnId; // Actualizar el ID del último turno anunciado
+          }, 300); 
+          prevTopCalledTurnIdRef.current = latestCalledTurnId; 
         }
       } else {
         // console.log("Firestore: No hay turnos llamados actualmente.");
-        // No es necesario cambiar prevTopCalledTurnIdRef.current a null aquí,
-        // ya que si antes había un turno y ahora no hay, no queremos que el próximo
-        // turno que aparezca se considere "no nuevo".
       }
       setRecentlyCalledTurns(calledTurnsData);
       if (isLoading) setIsLoading(false);
@@ -239,7 +236,7 @@ export default function CallPatientPage() {
       unsubscribeCalled();
       unsubscribePending();
     };
-  }, [toast]); // isLoading ya no es necesario como dependencia aquí
+  }, [toast]); 
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -255,11 +252,10 @@ export default function CallPatientPage() {
       const idParts = patientId.split(" ");
       const lastPart = idParts[idParts.length - 1];
       if (lastPart && lastPart.length > 3) {
-        // Tomar el prefijo (ej. "CC") y los últimos 3 dígitos del ID.
         const prefix = idParts.length > 1 ? idParts.slice(0, -1).join(" ") : (patientId.startsWith("CC") ? "CC" : "ID");
         return `${prefix} ...${lastPart.slice(-3)}`;
       }
-      return patientId; // fallback si el ID es muy corto o no tiene el formato esperado
+      return patientId; 
     }
     return "Paciente";
   }
@@ -276,6 +272,9 @@ export default function CallPatientPage() {
 
   return (
     <main className="flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6">
+      <div className="w-full flex justify-center mb-6">
+        <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={120} height={115} priority />
+      </div>
       {showInteractionPrompt && !userInteractedRef.current && (
         <Card className="w-full max-w-xl mb-4 shadow-lg border-2 border-yellow-500 bg-yellow-500/10">
           <CardContent className="p-4 text-center">

@@ -2,10 +2,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image"; // Import Image
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea"; // For displaying multiline analysis
+import { Textarea } from "@/components/ui/textarea"; 
 import { Lightbulb, Loader2, AlertTriangle, BarChart3 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -14,7 +15,7 @@ import { collection, query, orderBy, limit, getDocs, Timestamp } from "firebase/
 import type { Turn } from "@/types/turn";
 import { analyzeTurns, type TurnDataForAI } from "@/ai/flows/analyze-turns-flow";
 
-const MAX_TURNS_FOR_ANALYSIS = 100; // Limit the number of turns sent to AI for now
+const MAX_TURNS_FOR_ANALYSIS = 100; 
 
 export default function AnalisisPage() {
   const { currentUser, isLoading: authLoading } = useAuth();
@@ -54,7 +55,6 @@ export default function AnalisisPage() {
     setError(null);
 
     try {
-      // Fetch recent turns from Firestore
       const turnsQuery = query(
         collection(db, "turns"),
         orderBy("requestedAt", "desc"),
@@ -105,6 +105,9 @@ export default function AnalisisPage() {
     <main className="flex min-h-screen flex-col items-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-indigo-500/10 to-background">
       <Card className="w-full max-w-3xl shadow-xl">
         <CardHeader className="bg-indigo-600 text-white p-6 rounded-t-lg">
+          <div className="flex justify-center mb-4">
+             <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} />
+          </div>
           <div className="flex items-center gap-3">
             <BarChart3 className="h-10 w-10" />
             <div>
@@ -167,5 +170,4 @@ export default function AnalisisPage() {
     </main>
   );
 }
-
     

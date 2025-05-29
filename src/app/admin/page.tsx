@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image"; // Import Image
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,8 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { auth } from "@/lib/firebase"; // Import auth
-import { signOut } from "firebase/auth"; // Import signOut
+import { auth } from "@/lib/firebase"; 
+import { signOut } from "firebase/auth"; 
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext"; 
@@ -77,8 +78,6 @@ export default function AdminPage() {
     try {
       await signOut(auth);
       toast({ title: "Sesión Cerrada", description: "Has cerrado sesión exitosamente."});
-      // No es necesario router.push('/login') aquí explícitamente,
-      // el estado de useAuth cambiará y la UI se actualizará para pedir login.
     } catch (error) {
       console.error("Error signing out: ", error);
       toast({ title: "Error al Salir", description: "No se pudo cerrar la sesión.", variant: "destructive"});
@@ -99,7 +98,10 @@ export default function AdminPage() {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-destructive/10 via-background to-background">
         <Card className="w-full max-w-md shadow-2xl text-center">
-          <CardHeader className="bg-destructive text-destructive-foreground p-6 rounded-t-lg">
+           <CardHeader className="bg-destructive text-destructive-foreground p-6 rounded-t-lg">
+            <div className="flex flex-col items-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+            </div>
             <AlertTriangle className="mx-auto h-12 w-12 mb-2" />
             <CardTitle className="text-2xl font-bold">Acceso Denegado</CardTitle>
           </CardHeader>
@@ -119,7 +121,10 @@ export default function AdminPage() {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-destructive/10 via-background to-background">
         <Card className="w-full max-w-md shadow-2xl text-center">
-          <CardHeader className="bg-destructive text-destructive-foreground p-6 rounded-t-lg">
+           <CardHeader className="bg-destructive text-destructive-foreground p-6 rounded-t-lg">
+            <div className="flex flex-col items-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+            </div>
             <ShieldCheck className="mx-auto h-12 w-12 mb-2" />
             <CardTitle className="text-2xl font-bold">Acceso Denegado</CardTitle>
           </CardHeader>
@@ -136,11 +141,13 @@ export default function AdminPage() {
     );
   }
 
-  // Admin is authenticated (currentUser.email === ADMIN_EMAIL)
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 via-background to-background">
       <Card className="w-full max-w-lg shadow-2xl relative">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
+            <div className="flex justify-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} />
+            </div>
             <div className="flex items-center justify-between w-full">
                 <div className="flex items-center gap-2">
                     <UserCircle2 className="h-7 w-7" />

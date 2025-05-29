@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image"; // Import Image
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -43,7 +44,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, data.email, data.password);
       toast({ title: "Inicio de Sesión Exitoso", description: "Bienvenido al panel profesional." });
-      router.push("/profesional"); // Redirect to professional panel
+      router.push("/profesional"); 
     } catch (err: any) {
       console.error("Login error:", err);
       let friendlyMessage = "Ocurrió un error al iniciar sesión. Verifique sus credenciales.";
@@ -61,7 +62,10 @@ export default function LoginPage() {
     <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 via-background to-background">
       <Card className="w-full max-w-md shadow-2xl">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
-          <LogIn className="mx-auto h-12 w-12 mb-2" />
+          <div className="flex flex-col items-center mb-4">
+            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+          </div>
+          <LogIn className="mx-auto h-10 w-10 mb-2" />
           <CardTitle className="text-2xl font-bold">Acceso Profesional</CardTitle>
           <CardDescription className="text-primary-foreground/80">
             Ingrese sus credenciales para gestionar los turnos.

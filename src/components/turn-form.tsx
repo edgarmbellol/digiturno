@@ -5,6 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { useState } from "react";
+import Image from "next/image"; // Import Image
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -53,10 +54,8 @@ const formSchema = z.object({
     const selectedPriorityCount = priorityConditions.filter(Boolean).length;
 
     if (isNone) {
-        // If "None" is selected, no other priority condition should be selected.
         return selectedPriorityCount === 0;
     } else {
-        // If "None" is NOT selected, exactly one priority condition must be selected.
         return selectedPriorityCount === 1;
     }
 }, {
@@ -90,7 +89,7 @@ export default function TurnForm() {
     defaultValues: {
       service: "",
       idNumber: "",
-      patientName: "",
+      patientName: "", 
       isSenior: false,
       isPregnant: false,
       isDisabled: false,
@@ -100,7 +99,7 @@ export default function TurnForm() {
 
   const { reset, control, setValue, getValues, trigger, watch } = form;
   
-  const watchIsNone = watch("isNone"); // Keep this for visual styling if needed, but not for disabling
+  const watchIsNone = watch("isNone");
 
   const fetchPatientNameById = async (idDocument: string) => {
     if (!idDocument.trim()) {
@@ -241,6 +240,9 @@ export default function TurnForm() {
     return (
       <Card className="w-full max-w-lg shadow-xl transform transition-all duration-300">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
+          <div className="flex flex-col items-center mb-4">
+            <Image src="/logo-hospital.png" alt="Logo Hospital" width={100} height={96} priority />
+          </div>
           <div className="mx-auto bg-background/20 text-primary-foreground p-3 rounded-full w-fit mb-3">
             <PartyPopper className="h-10 w-10" />
           </div>
@@ -279,8 +281,8 @@ export default function TurnForm() {
   return (
     <Card className="w-full max-w-lg shadow-xl">
       <CardHeader className="bg-primary text-primary-foreground p-6 rounded-t-lg">
-        <div className="mx-auto mb-3">
-            <UserPlus className="h-12 w-12 text-primary-foreground/80" />
+        <div className="flex flex-col items-center mb-4">
+          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
         </div>
         <CardTitle className="text-3xl font-bold text-center">TurnoFacil</CardTitle>
         <CardDescription className="text-center text-primary-foreground/80 pt-1">
@@ -388,45 +390,42 @@ export default function TurnForm() {
                         <FormControl>
                           <Checkbox
                             checked={field.value}
-                            onCheckedChange={(checkedValue) => {
-                              const isChecking = Boolean(checkedValue);
-                              
-                              if (item.name === "isNone") {
-                                setValue("isNone", isChecking, { shouldValidate: false });
-                                if (isChecking) {
-                                  setValue("isSenior", false, { shouldValidate: false });
-                                  setValue("isPregnant", false, { shouldValidate: false });
-                                  setValue("isDisabled", false, { shouldValidate: false });
+                            onCheckedChange={(checkedState) => {
+                                const isChecking = Boolean(checkedState);
+                                field.onChange(isChecking); // Update the specific field
+
+                                if (item.name === "isNone") {
+                                    if (isChecking) {
+                                        setValue("isSenior", false, { shouldValidate: false });
+                                        setValue("isPregnant", false, { shouldValidate: false });
+                                        setValue("isDisabled", false, { shouldValidate: false });
+                                    }
+                                } else { // A priority condition is being changed
+                                    if (isChecking) {
+                                        setValue("isNone", false, { shouldValidate: false });
+                                        // Uncheck other priority conditions
+                                        if (item.name !== "isSenior") setValue("isSenior", false, { shouldValidate: false });
+                                        if (item.name !== "isPregnant") setValue("isPregnant", false, { shouldValidate: false });
+                                        if (item.name !== "isDisabled") setValue("isDisabled", false, { shouldValidate: false });
+                                    } else {
+                                        // If this priority is being unchecked, check if any other priority is active.
+                                        // If not, 'isNone' must become true.
+                                        const anyOtherPriorityActive =
+                                            (item.name === "isSenior" ? false : getValues("isSenior")) ||
+                                            (item.name === "isPregnant" ? false : getValues("isPregnant")) ||
+                                            (item.name === "isDisabled" ? false : getValues("isDisabled"));
+                                        if (!anyOtherPriorityActive) {
+                                            setValue("isNone", true, { shouldValidate: false });
+                                        }
+                                    }
                                 }
-                              } else { // One of the priority conditions
-                                const currentFieldName = item.name as "isSenior" | "isPregnant" | "isDisabled";
-                                setValue(currentFieldName, isChecking, { shouldValidate: false });
-                                
-                                if (isChecking) {
-                                  setValue("isNone", false, { shouldValidate: false });
-                                  // Uncheck other priority conditions
-                                  if (currentFieldName !== "isSenior") setValue("isSenior", false, { shouldValidate: false });
-                                  if (currentFieldName !== "isPregnant") setValue("isPregnant", false, { shouldValidate: false });
-                                  if (currentFieldName !== "isDisabled") setValue("isDisabled", false, { shouldValidate: false });
-                                } else {
-                                  // If this priority is being unchecked, check if any other priority is active.
-                                  // If not, 'isNone' must become true.
-                                  const anyOtherPriorityActive =
-                                    (currentFieldName === "isSenior" ? false : getValues("isSenior")) ||
-                                    (currentFieldName === "isPregnant" ? false : getValues("isPregnant")) ||
-                                    (currentFieldName === "isDisabled" ? false : getValues("isDisabled"));
-                                  if (!anyOtherPriorityActive) {
-                                    setValue("isNone", true, { shouldValidate: false });
-                                  }
-                                }
-                              }
-                              trigger(["isNone", "isSenior", "isPregnant", "isDisabled"]);
+                                trigger(["isNone", "isSenior", "isPregnant", "isDisabled"]);
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                           />
                         </FormControl>
-                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-muted-foreground'}`} />
+                        <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-foreground'}`} />
                         <FormLabel
                           htmlFor={field.name} 
                           className={`font-normal text-base m-0! cursor-pointer w-full ${field.value ? 'text-primary' : 'text-foreground'}`}
@@ -452,5 +451,4 @@ export default function TurnForm() {
     </Card>
   );
 }
-
     

@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image"; // Import Image
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,8 +21,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import type { Turn } from '@/types/turn';
-import { db, auth } from "@/lib/firebase"; // Import auth
-import { signOut } from "firebase/auth"; // Import signOut
+import { db, auth } from "@/lib/firebase"; 
+import { signOut } from "firebase/auth"; 
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -44,14 +45,13 @@ export default function ProfessionalPage() {
   const [selectedService, setSelectedService] = useState<ServiceDefinition | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Effect for initializing from localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedServiceValue = localStorage.getItem(SERVICE_STORAGE_KEY);
       if (storedServiceValue) {
         const serviceDef = AVAILABLE_SERVICES.find(s => s.value === storedServiceValue);
         if (serviceDef) {
-          setSelectedService(serviceDef); // Set service first
+          setSelectedService(serviceDef); 
 
           const storedModule = localStorage.getItem(MODULE_STORAGE_KEY);
           if (storedModule && serviceDef.modules.includes(storedModule)) {
@@ -329,6 +329,9 @@ export default function ProfessionalPage() {
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-accent/10 to-background">
         <Card className="w-full max-w-lg shadow-xl">
           <CardHeader className="bg-accent text-accent-foreground p-6 rounded-t-lg">
+            <div className="flex flex-col items-center mb-4">
+             <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+            </div>
             <Workflow className="h-10 w-10 mx-auto mb-3" />
             <CardTitle className="text-2xl font-bold text-center">Seleccionar Servicio</CardTitle>
             <CardDescription className="text-center text-accent-foreground/80 pt-1">
@@ -353,6 +356,11 @@ export default function ProfessionalPage() {
             </Select>
             <p className="text-xs text-muted-foreground text-center">Esta selección se recordará para esta sesión.</p>
           </CardContent>
+           <CardFooter className="flex flex-col sm:flex-row gap-2 p-6 justify-center">
+            <Button variant="outline" onClick={handleLogout} className="w-full sm:w-auto">
+              <LogOut className="mr-2 h-4 w-4" /> Cerrar Sesión
+            </Button>
+          </CardFooter>
         </Card>
       </main>
     );
@@ -363,6 +371,9 @@ export default function ProfessionalPage() {
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 to-background">
         <Card className="w-full max-w-lg shadow-xl">
           <CardHeader className="bg-primary text-primary-foreground p-6 rounded-t-lg">
+            <div className="flex flex-col items-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+            </div>
             <Briefcase className="h-10 w-10 mx-auto mb-3" />
             <CardTitle className="text-2xl font-bold text-center">Seleccionar Ventanilla/Recepción</CardTitle>
             <CardDescription className="text-center text-primary-foreground/80 pt-1">
@@ -385,28 +396,23 @@ export default function ProfessionalPage() {
           </CardContent>
            <CardFooter className="flex flex-col sm:flex-row gap-2 p-6">
             <Button variant="outline" onClick={clearSelectedService} className="w-full sm:w-auto">Cambiar Servicio</Button>
+             <Button variant="destructive" onClick={handleLogout} className="w-full sm:w-auto">
+              <LogOut className="mr-2 h-4 w-4" /> Cerrar Sesión
+            </Button>
           </CardFooter>
         </Card>
       </main>
     );
   }
-
-  if (isLoading && pendingTurns.length === 0 && !calledTurn) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
-        <Hourglass className="h-16 w-16 text-primary animate-spin" />
-        <p className="text-xl text-muted-foreground mt-4">Cargando panel profesional...</p>
-      </main>
-    );
-  }
-  
-  const nextTurnToDisplayInDialog = getNextTurnToCall();
   
   return (
     <main className="flex min-h-screen flex-col items-center justify-start p-4 sm:p-6 md:p-8 bg-secondary/30">
       <div className="w-full max-w-5xl space-y-8">
         <Card className="shadow-xl">
           <CardHeader className="bg-primary text-primary-foreground rounded-t-lg p-6">
+             <div className="flex justify-center mb-4">
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} />
+            </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between">
               <div>
                 <CardTitle className="text-3xl font-bold">Panel Profesional</CardTitle>
@@ -486,17 +492,17 @@ export default function ProfessionalPage() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Confirmar Llamada</AlertDialogTitle>
                     <AlertDialogDescription>
-                      {nextTurnToDisplayInDialog ? 
-                       `¿Está seguro que desea llamar a ${getPatientDisplayName(nextTurnToDisplayInDialog.patientName, nextTurnToDisplayInDialog.patientId)} (${nextTurnToDisplayInDialog.turnNumber}) para ${nextTurnToDisplayInDialog.service} desde ${selectedModule}?`
+                      {getNextTurnToCall() ? 
+                       `¿Está seguro que desea llamar a ${getPatientDisplayName(getNextTurnToCall()!.patientName, getNextTurnToCall()!.patientId)} (${getNextTurnToCall()!.turnNumber}) para ${getNextTurnToCall()!.service} desde ${selectedModule}?`
                        : `No hay pacientes para llamar para ${selectedService.label}.`}
                     
-                    {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
-                    {(!selectedModule || !selectedService) && <div className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
+                     {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
+                     {(!selectedModule || !selectedService) && <div className="mt-2 text-destructive">Debe seleccionar una ventanilla y servicio primero.</div>}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={callNextPatient} disabled={!nextTurnToDisplayInDialog || !!calledTurn || !selectedModule || !selectedService}>
+                    <AlertDialogAction onClick={callNextPatient} disabled={!getNextTurnToCall() || !!calledTurn || !selectedModule || !selectedService}>
                       Llamar
                     </AlertDialogAction>
                   </AlertDialogFooter>
@@ -564,5 +570,4 @@ export default function ProfessionalPage() {
     </main>
   );
 }
-
     
