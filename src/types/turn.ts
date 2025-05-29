@@ -29,3 +29,4 @@ export interface Turn {
   doctorCompletedAt?: Timestamp; // Cuándo el médico completó la consulta
   doctorMissedAt?: Timestamp; // Cuándo el médico marcó como no presentado
 }
+

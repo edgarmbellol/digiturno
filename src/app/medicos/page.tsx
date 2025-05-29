@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Stethoscope, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Search, Hospital, LogOut, Loader2 } from "lucide-react";
+import { Stethoscope, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Search, Hospital, LogOut, Loader2, RotateCcw, MessageSquareWarning } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,13 +30,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-// import { AVAILABLE_CONSULTORIOS as DEFAULT_CONSULTORIOS_STATIC } from "@/lib/consultorios"; // Old static
 import type { ConsultorioConfig } from "@/config/appConfigTypes";
 import { AVAILABLE_CONSULTORIOS as DEFAULT_CONSULTORIOS_STATIC_FALLBACK } from "@/lib/consultorios";
 
 const CONSULTORIO_STORAGE_KEY = "selectedDoctorConsultorio";
 const APP_CONFIG_COLLECTION = "app_configurations";
 const CONSULTORIOS_DOC_ID = "main_consultorios_config";
+const MAX_RECENTLY_MISSED_TURNS_MEDICO = 2;
 
 export default function MedicosPage() {
   const { currentUser, isLoading: authLoading } = useAuth();
@@ -45,12 +45,13 @@ export default function MedicosPage() {
 
   const [waitingTurns, setWaitingTurns] = useState<Turn[]>([]);
   const [calledTurn, setCalledTurn] = useState<Turn | null>(null);
+  const [recentlyMissedTurnsByMe, setRecentlyMissedTurnsByMe] = useState<Turn[]>([]);
   
   const [availableConsultorios, setAvailableConsultorios] = useState<string[]>([]);
   const [isLoadingConsultorioConfig, setIsLoadingConsultorioConfig] = useState(true);
   const [selectedConsultorio, setSelectedConsultorio] = useState<string | null>(null);
 
-  const [isLoadingData, setIsLoadingData] = useState(true); // For turns data
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
   const fetchConsultorioConfiguration = useCallback(async () => {
@@ -63,23 +64,28 @@ export default function MedicosPage() {
       if (consultorioDocSnap.exists()) {
         consultorioNamesData = (consultorioDocSnap.data() as ConsultorioConfig).names;
       } else {
-        toast({ title: "Usando Config. por Defecto", description: "No se encontró config. de consultorios en Firestore. Usando valores estáticos.", duration: 5000});
+        toast({ title: "Usando Config. por Defecto", description: "No se encontró config. de consultorios en Firestore. Usando valores estáticos.", duration: 5000, variant: "default"});
         consultorioNamesData = [...DEFAULT_CONSULTORIOS_STATIC_FALLBACK];
       }
-      setAvailableConsultorios(consultorioNamesData);
+      
+      if (!consultorioNamesData || consultorioNamesData.length === 0) {
+          // Fallback again if Firestore data is empty array
+          consultorioNamesData = [...DEFAULT_CONSULTORIOS_STATIC_FALLBACK];
+      }
+      setAvailableConsultorios(consultorioNamesData.sort());
 
-      // Restore selection from localStorage after consultorios are loaded
+
       const storedConsultorio = localStorage.getItem(CONSULTORIO_STORAGE_KEY);
       if (storedConsultorio && consultorioNamesData.includes(storedConsultorio)) {
         setSelectedConsultorio(storedConsultorio);
       } else {
-        setSelectedConsultorio(null); // Clear if not valid
+        setSelectedConsultorio(null);
       }
 
     } catch (error) {
       console.error("Error fetching consultorio configuration:", error);
       toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de consultorios. Usando valores por defecto.", variant: "destructive" });
-      setAvailableConsultorios([...DEFAULT_CONSULTORIOS_STATIC_FALLBACK]);
+      setAvailableConsultorios([...DEFAULT_CONSULTORIOS_STATIC_FALLBACK].sort());
     } finally {
       setIsLoadingConsultorioConfig(false);
     }
@@ -108,6 +114,7 @@ export default function MedicosPage() {
     }
     setCalledTurn(null); 
     setWaitingTurns([]); 
+    setRecentlyMissedTurnsByMe([]);
     toast({ title: "Consultorio Deseleccionado", description: "Por favor, seleccione un consultorio para continuar." });
   }
 
@@ -121,21 +128,23 @@ export default function MedicosPage() {
     if (!currentUser || !selectedConsultorio || isLoadingConsultorioConfig) {
         setIsLoadingData(false); 
         setWaitingTurns([]);
+        setRecentlyMissedTurnsByMe([]);
         if(calledTurn) setCalledTurn(null);
         return;
     }
     
     setIsLoadingData(true);
 
+    // Listener for waiting_doctor turns
     const qWaiting = query(
       collection(db, "turns"), 
       where("status", "==", "waiting_doctor"),
-      orderBy("completedAt", "asc") // Patients who completed reception first
+      orderBy("completedAt", "asc") 
     );
     const unsubscribeWaiting = onSnapshot(qWaiting, (querySnapshot) => {
       const turnsData: Turn[] = [];
-      querySnapshot.forEach((doc) => {
-        turnsData.push({ id: doc.id, ...doc.data() } as Turn);
+      querySnapshot.forEach((docSnap) => {
+        turnsData.push({ id: docSnap.id, ...docSnap.data() } as Turn);
       });
       setWaitingTurns(turnsData);
       setIsLoadingData(false); 
@@ -154,15 +163,14 @@ export default function MedicosPage() {
       setIsLoadingData(false);
     });
     
-    // Listen for turn called by THIS doctor at THIS consultorio
+    // Listener for turn called by THIS doctor at THIS consultorio
     const qCalledByThisDoctor = query(
         collection(db, "turns"),
         where("status", "==", "called_by_doctor"),
-        where("professionalId", "==", currentUser.uid), // professionalId stores doctor's UID here
+        where("professionalId", "==", currentUser.uid),
         where("module", "==", selectedConsultorio), 
         limit(1)
     );
-
     const unsubscribeCalledByThisDoctorListener = onSnapshot(qCalledByThisDoctor, (querySnapshot) => {
         if (!querySnapshot.empty) {
             const turnDoc = querySnapshot.docs[0];
@@ -172,14 +180,41 @@ export default function MedicosPage() {
         }
     }, (error) => {
         console.error("Error fetching current doctor called turn:", error);
+        toast({ title: "Error de Sincronización", description: "No se pudo verificar el turno activo del médico.", variant: "destructive" });
+    });
+
+    // Listener for recently missed turns by this doctor
+    const qMissedByMe = query(
+      collection(db, "turns"),
+      where("status", "==", "missed_by_doctor"),
+      where("professionalId", "==", currentUser.uid),
+      where("module", "==", selectedConsultorio),
+      orderBy("doctorMissedAt", "desc"),
+      limit(MAX_RECENTLY_MISSED_TURNS_MEDICO)
+    );
+    const unsubscribeMissedByMe = onSnapshot(qMissedByMe, (querySnapshot) => {
+      const missedTurnsData: Turn[] = [];
+      querySnapshot.forEach((docSnap) => {
+        missedTurnsData.push({ id: docSnap.id, ...docSnap.data() } as Turn);
+      });
+      setRecentlyMissedTurnsByMe(missedTurnsData);
+    }, (error) => {
+      console.error("Error fetching recently missed turns by doctor:", error);
+      if (error.message && error.message.includes("indexes?create_composite")) {
+        toast({ 
+            title: "Error de Firestore (Índice)", 
+            description: "Se necesita un índice para ver las consultas no presentadas. Revise la consola.", 
+            variant: "destructive",
+            duration: 10000 
+        });
+      }
     });
     
 
     return () => {
       unsubscribeWaiting();
-      if (unsubscribeCalledByThisDoctorListener) {
-        unsubscribeCalledByThisDoctorListener();
-      }
+      unsubscribeCalledByThisDoctorListener();
+      unsubscribeMissedByMe();
     };
   }, [currentUser, selectedConsultorio, toast, isLoadingConsultorioConfig]);
 
@@ -196,6 +231,7 @@ export default function MedicosPage() {
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "N/A";
     const jsDate = date instanceof Timestamp ? date.toDate() : date;
+    if (Math.abs(new Date().getTime() - jsDate.getTime()) < 5000) return "Ahora";
     return formatDistanceToNowStrict(jsDate, { addSuffix: true, locale: es });
   };
 
@@ -229,7 +265,6 @@ export default function MedicosPage() {
         professionalId: currentUser.uid, 
         professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
-      // setCalledTurn(patientTurn); // Firestore listener will update this
       toast({ title: "Paciente Llamado", description: `Llamando a ${getPatientDisplayName(patientTurn.patientName, patientTurn.patientId)} (${patientTurn.turnNumber}) al ${selectedConsultorio}.` });
     } catch (error) {
       console.error("Error calling patient by doctor: ", error);
@@ -244,24 +279,48 @@ export default function MedicosPage() {
     }
     try {
       const turnRef = doc(db, "turns", calledTurn.id);
-      let updateData: Partial<Turn> = { status }; // Base update data
+      let updateData: Partial<Turn> & { [key:string]: any } = { status }; 
 
       if (status === 'completed_by_doctor') {
         updateData.doctorCompletedAt = serverTimestamp();
       } else if (status === 'missed_by_doctor') {
-        updateData.doctorMissedAt = serverTimestamp();
+        updateData.doctorMissedAt = serverTimestamp(); 
       }
-      // Ensure professionalId and module are also set, in case they weren't (though they should be)
       updateData.professionalId = currentUser.uid;
       updateData.professionalDisplayName = currentUser.displayName || currentUser.email;
       updateData.module = selectedConsultorio;
       
       await updateDoc(turnRef, updateData);
       toast({ title: "Consulta Actualizada", description: `La consulta ${calledTurn.turnNumber} ha sido marcada como ${status === 'completed_by_doctor' ? 'completada' : 'paciente no se presentó'}.`});
-      // setCalledTurn(null); // Firestore listener will clear this
     } catch (error) {
       console.error("Error updating doctor turn status: ", error);
       toast({ title: "Error", description: "No se pudo actualizar el estado de la consulta.", variant: "destructive" });
+    }
+  };
+
+  const reCallDoctorTurn = async (turnToRecall: Turn) => {
+    if (!currentUser || !selectedConsultorio) {
+      toast({ title: "Error", description: "Configuración de médico incompleta.", variant: "destructive" });
+      return;
+    }
+    if (calledTurn) {
+      toast({ title: "Atención", description: `Ya está atendiendo el turno ${calledTurn.turnNumber}. Finalícelo antes de re-llamar.`, variant: "default" });
+      return;
+    }
+    try {
+      const turnRef = doc(db, "turns", turnToRecall.id);
+      await updateDoc(turnRef, {
+        status: "called_by_doctor",
+        calledAt: serverTimestamp(),
+        professionalId: currentUser.uid,
+        professionalDisplayName: currentUser.displayName || currentUser.email,
+        module: selectedConsultorio,
+        // doctorMissedAt: deleteField() // Or set to null
+      });
+      toast({ title: "Paciente Re-Llamado", description: `Re-llamando a ${getPatientDisplayName(turnToRecall.patientName, turnToRecall.patientId)} (${turnToRecall.turnNumber}) al consultorio.` });
+    } catch (error) {
+      console.error("Error re-calling doctor turn: ", error);
+      toast({ title: "Error al Re-Llamar", description: "No se pudo re-llamar al paciente.", variant: "destructive" });
     }
   };
 
@@ -466,7 +525,7 @@ export default function MedicosPage() {
                                 <AlertDialogDescription>
                                   {`¿Está seguro que desea llamar a ${getPatientDisplayName(turn.patientName, turn.patientId)} (turno ${turn.turnNumber}) al consultorio ${selectedConsultorio}?`}
                                 
-                                 {!!calledTurn && <div className="mt-2 text-destructive">Ya está atendiendo a un paciente. Finalice el turno actual primero.</div>}
+                                 <div className="mt-2 text-destructive">{!!calledTurn ? `Ya está atendiendo a un paciente. Finalice el turno actual primero.` : ''}</div>
                                 </AlertDialogDescription>
                               </AlertDialogHeader>
                               <AlertDialogFooter>
@@ -484,6 +543,40 @@ export default function MedicosPage() {
                 </div>
               </ScrollArea>
             )}
+
+             {recentlyMissedTurnsByMe.length > 0 && (
+              <div className="mt-8">
+                <h2 className="text-xl font-semibold text-foreground flex items-center mb-4">
+                  <MessageSquareWarning className="mr-3 h-6 w-6 text-orange-500" />
+                  Consultas No Presentadas (Recientes)
+                </h2>
+                <ScrollArea className="h-[150px] border rounded-lg p-1 bg-background">
+                  <div className="space-y-3 p-3">
+                    {recentlyMissedTurnsByMe.map((turn) => (
+                      <Card key={turn.id} className="shadow-sm bg-orange-500/5 border-orange-500/30">
+                        <CardContent className="p-3 flex flex-col sm:flex-row justify-between items-start">
+                          <div className="mb-2 sm:mb-0 flex-grow">
+                            <p className="text-base font-semibold text-orange-700">{turn.turnNumber}</p>
+                            <p className="text-sm text-muted-foreground">{getPatientDisplayName(turn.patientName, turn.patientId)}</p>
+                            <p className="text-xs text-muted-foreground/80">No se presentó: {getTimeAgo(turn.doctorMissedAt)}</p>
+                          </div>
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            className="border-orange-500 text-orange-600 hover:bg-orange-500/10 w-full sm:w-auto self-center"
+                            onClick={() => reCallDoctorTurn(turn)}
+                            disabled={!!calledTurn}
+                          >
+                            <RotateCcw className="mr-2 h-4 w-4" /> Re-Llamar
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+
           </CardContent>
         </Card>
       </div>
@@ -502,3 +595,4 @@ export default function MedicosPage() {
     </main>
   );
 }
+

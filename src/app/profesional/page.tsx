@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Workflow, LogOut, Loader2 } from "lucide-react";
+import { Users, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Workflow, LogOut, Loader2, RotateCcw, MessageSquareWarning } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,13 +23,12 @@ import {
 import type { Turn } from '@/types/turn';
 import { db, auth } from "@/lib/firebase"; 
 import { signOut } from "firebase/auth"; 
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit, getDocs } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit, getDocs, writeBatch } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-// import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC } from "@/lib/services"; // Old static import
 import type { ServiceConfig, ServiceDefinitionFront } from "@/config/appConfigTypes";
 import { serviceIconMap, DefaultServiceIcon } from "@/lib/iconMapping";
 import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC_FALLBACK } from "@/lib/services";
@@ -38,6 +37,7 @@ import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC_FALLBACK } from "@/lib/se
 const MODULE_STORAGE_KEY = "selectedProfessionalModule";
 const SERVICE_STORAGE_KEY = "selectedProfessionalService";
 const SERVICE_CONFIG_COLLECTION = "service_configurations";
+const MAX_RECENTLY_MISSED_TURNS = 3;
 
 
 export default function ProfessionalPage() {
@@ -47,6 +47,7 @@ export default function ProfessionalPage() {
 
   const [pendingTurns, setPendingTurns] = useState<Turn[]>([]);
   const [calledTurn, setCalledTurn] = useState<Turn | null>(null);
+  const [recentlyMissedTurnsByMe, setRecentlyMissedTurnsByMe] = useState<Turn[]>([]);
   
   const [availableServices, setAvailableServices] = useState<ServiceDefinitionFront[]>([]);
   const [isLoadingServiceConfig, setIsLoadingServiceConfig] = useState(true);
@@ -61,18 +62,17 @@ export default function ProfessionalPage() {
       const serviceSnapshot = await getDocs(collection(db, SERVICE_CONFIG_COLLECTION));
       let servicesData: ServiceDefinitionFront[] = [];
       if (serviceSnapshot.empty) {
-        toast({ title: "Usando Config. por Defecto", description: "No se encontró config. de servicios en Firestore. Usando valores estáticos.", duration: 5000});
+        toast({ title: "Usando Config. por Defecto", description: "No se encontró config. de servicios en Firestore. Usando valores estáticos.", duration: 5000, variant: "default" });
         servicesData = DEFAULT_SERVICES_STATIC_FALLBACK.map(s => ({
-          ...s, // Includes label, prefix, modules, icon component
-          id: s.value, // Keep id consistent with ServiceConfig 'id'
-          // icon already a component in DEFAULT_SERVICES_STATIC_FALLBACK
+          ...s,
+          id: s.value, 
         }));
       } else {
         servicesData = serviceSnapshot.docs.map(doc => {
           const data = doc.data() as ServiceConfig;
           return {
             id: data.id,
-            value: data.id, // For Select component
+            value: data.id,
             label: data.label,
             icon: serviceIconMap[data.iconName] || DefaultServiceIcon,
             prefix: data.prefix,
@@ -82,7 +82,6 @@ export default function ProfessionalPage() {
       }
       setAvailableServices(servicesData);
 
-      // Restore selections from localStorage after services are loaded
       const storedServiceValue = localStorage.getItem(SERVICE_STORAGE_KEY);
       if (storedServiceValue) {
         const serviceDef = servicesData.find(s => s.id === storedServiceValue);
@@ -92,10 +91,10 @@ export default function ProfessionalPage() {
           if (storedModule && serviceDef.modules.includes(storedModule)) {
             setSelectedModule(storedModule);
           } else {
-            setSelectedModule(null); // Clear module if not valid for restored service
+            setSelectedModule(null);
           }
         } else {
-          setSelectedService(null); // Clear service if not found
+          setSelectedService(null);
           setSelectedModule(null);
         }
       }
@@ -137,6 +136,7 @@ export default function ProfessionalPage() {
     }
     setPendingTurns([]);
     setCalledTurn(null);
+    setRecentlyMissedTurnsByMe([]);
     toast({ title: "Configuración Deseleccionada", description: "Por favor, seleccione un servicio y ventanilla para continuar." });
   };
 
@@ -148,9 +148,9 @@ export default function ProfessionalPage() {
             localStorage.setItem(SERVICE_STORAGE_KEY, serviceDef.id);
         }
         setPendingTurns([]); 
-        setCalledTurn(null); 
+        setCalledTurn(null);
+        setRecentlyMissedTurnsByMe([]); 
 
-        // If current module is not valid for the new service, clear it
         if (selectedModule && !serviceDef.modules.includes(selectedModule)) {
           setSelectedModule(null); 
           if (typeof window !== "undefined") {
@@ -164,13 +164,14 @@ export default function ProfessionalPage() {
 
   const clearSelectedServiceOnly = () => { 
     setSelectedService(null);
-    setSelectedModule(null); // Also clear module when service is cleared
+    setSelectedModule(null);
      if (typeof window !== "undefined") {
       localStorage.removeItem(SERVICE_STORAGE_KEY);
       localStorage.removeItem(MODULE_STORAGE_KEY);
     }
     setPendingTurns([]);
     setCalledTurn(null);
+    setRecentlyMissedTurnsByMe([]);
     toast({ title: "Servicio Deseleccionado", description: "Por favor, seleccione un servicio para continuar." });
   };
 
@@ -185,15 +186,17 @@ export default function ProfessionalPage() {
         setIsLoadingData(false); 
         setPendingTurns([]); 
         if (calledTurn) setCalledTurn(null); 
+        setRecentlyMissedTurnsByMe([]);
         return;
     }
     
     setIsLoadingData(true);
 
+    // Listener for pending turns
     const qPending = query(
       collection(db, "turns"), 
       where("status", "==", "pending"), 
-      where("service", "==", selectedService.label), // Filter by selected service's label
+      where("service", "==", selectedService.label),
       orderBy("priority", "desc"), 
       orderBy("requestedAt", "asc")
     );
@@ -219,8 +222,7 @@ export default function ProfessionalPage() {
       setIsLoadingData(false);
     });
 
-    let unsubscribeCalledTurnListener: (() => void) | null = null;
-    // Listen for turn called by THIS professional, for THIS service at THIS module
+    // Listener for turn called by THIS professional
     const qCalledByThisProfessional = query(
         collection(db, "turns"),
         where("status", "==", "called"),
@@ -229,8 +231,7 @@ export default function ProfessionalPage() {
         where("service", "==", selectedService.label), 
         limit(1)
     );
-
-    unsubscribeCalledTurnListener = onSnapshot(qCalledByThisProfessional, (querySnapshot) => {
+    const unsubscribeCalledTurnListener = onSnapshot(qCalledByThisProfessional, (querySnapshot) => {
         if (!querySnapshot.empty) {
             const turnDoc = querySnapshot.docs[0];
             setCalledTurn({ id: turnDoc.id, ...turnDoc.data() } as Turn);
@@ -241,12 +242,39 @@ export default function ProfessionalPage() {
         console.error("Error fetching current called turn:", error);
         toast({ title: "Error de Sincronización", description: "No se pudo verificar el turno activo.", variant: "destructive" });
     });
+
+    // Listener for recently missed turns by this professional
+    const qMissedByMe = query(
+      collection(db, "turns"),
+      where("status", "==", "missed"),
+      where("professionalId", "==", currentUser.uid),
+      where("module", "==", selectedModule),
+      where("service", "==", selectedService.label),
+      orderBy("missedAt", "desc"),
+      limit(MAX_RECENTLY_MISSED_TURNS)
+    );
+    const unsubscribeMissedByMe = onSnapshot(qMissedByMe, (querySnapshot) => {
+      const missedTurnsData: Turn[] = [];
+      querySnapshot.forEach((doc) => {
+        missedTurnsData.push({ id: doc.id, ...doc.data() } as Turn);
+      });
+      setRecentlyMissedTurnsByMe(missedTurnsData);
+    }, (error) => {
+      console.error("Error fetching recently missed turns by me:", error);
+      if (error.message && error.message.includes("indexes?create_composite")) {
+        toast({ 
+            title: "Error de Firestore (Índice)", 
+            description: "Se necesita un índice para ver los turnos no presentados. Revise la consola.", 
+            variant: "destructive",
+            duration: 10000 
+        });
+      }
+    });
     
     return () => {
       unsubscribePending();
-      if (unsubscribeCalledTurnListener) {
-        unsubscribeCalledTurnListener();
-      }
+      unsubscribeCalledTurnListener();
+      unsubscribeMissedByMe();
     };
   }, [currentUser, selectedModule, selectedService, toast, isLoadingServiceConfig]); 
 
@@ -271,7 +299,7 @@ export default function ProfessionalPage() {
 
   const getNextTurnToCall = useCallback(() => {
     if (pendingTurns.length === 0) return null;
-    return pendingTurns[0]; // Already sorted by priority then requestedAt
+    return pendingTurns[0];
   }, [pendingTurns]);
 
   const callNextPatient = async () => {
@@ -299,7 +327,6 @@ export default function ProfessionalPage() {
         professionalId: currentUser.uid,
         professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
-      // setCalledTurn(nextTurn); // Firestore listener will update this
       toast({ title: "Paciente Llamado", description: `Llamando a ${getPatientDisplayName(nextTurn.patientName, nextTurn.patientId)} (${nextTurn.turnNumber}) para ${selectedService.label} desde ${selectedModule}.` });
     } catch (error) {
       console.error("Error updating document: ", error);
@@ -314,7 +341,7 @@ export default function ProfessionalPage() {
     }
     try {
       const turnRef = doc(db, "turns", calledTurn.id);
-      let updateData: Partial<Turn> = {
+      let updateData: Partial<Turn> & { [key:string]: any } = {
         professionalId: currentUser.uid, 
         professionalDisplayName: currentUser.displayName || currentUser.email,
         module: selectedModule, 
@@ -323,8 +350,7 @@ export default function ProfessionalPage() {
       let toastMessageAction = "completado";
 
       if (newStatus === 'completed') {
-        // Specific logic for "Facturación" service
-        if (calledTurn.service === "Facturación") { // Compare with the label of the service
+        if (calledTurn.service === "Facturación") { 
           updateData.status = 'waiting_doctor';
           toastMessageAction = "listo para médico";
         } else {
@@ -333,17 +359,44 @@ export default function ProfessionalPage() {
         updateData.completedAt = serverTimestamp();
       } else if (newStatus === 'missed') {
         updateData.status = 'missed';
-        updateData.missedAt = serverTimestamp();
+        updateData.missedAt = serverTimestamp(); 
         toastMessageAction = "no se presentó";
       }
       
-      await updateDoc(turnRef, updateData as any); // Use `as any` if TS complains about serverTimestamp with Partial<Turn>
+      await updateDoc(turnRef, updateData); 
 
       toast({ title: "Turno Actualizado", description: `El turno ${calledTurn.turnNumber} ha sido marcado como ${toastMessageAction}.`});
-      // setCalledTurn(null); // Firestore listener will clear this
     } catch (error) {
       console.error("Error updating turn status: ", error);
       toast({ title: "Error", description: "No se pudo actualizar el estado del turno.", variant: "destructive" });
+    }
+  };
+
+  const reCallTurn = async (turnToRecall: Turn) => {
+    if (!currentUser || !selectedModule || !selectedService) {
+      toast({ title: "Error", description: "Configuración de profesional incompleta.", variant: "destructive" });
+      return;
+    }
+    if (calledTurn) {
+      toast({ title: "Atención", description: `Ya está atendiendo el turno ${calledTurn.turnNumber}. Finalícelo antes de re-llamar.`, variant: "default" });
+      return;
+    }
+    try {
+      const turnRef = doc(db, "turns", turnToRecall.id);
+      await updateDoc(turnRef, {
+        status: "called", // Change status back to 'called'
+        calledAt: serverTimestamp(), // Update calledAt time
+        // Re-affirm professional details, module
+        professionalId: currentUser.uid,
+        professionalDisplayName: currentUser.displayName || currentUser.email,
+        module: selectedModule,
+        // Optionally clear missedAt if you want
+        // missedAt: deleteField() // Or set to null if preferred
+      });
+      toast({ title: "Paciente Re-Llamado", description: `Re-llamando a ${getPatientDisplayName(turnToRecall.patientName, turnToRecall.patientId)} (${turnToRecall.turnNumber}).` });
+    } catch (error) {
+      console.error("Error re-calling turn: ", error);
+      toast({ title: "Error al Re-Llamar", description: "No se pudo re-llamar al paciente.", variant: "destructive" });
     }
   };
 
@@ -621,6 +674,41 @@ export default function ProfessionalPage() {
                 </div>
               </ScrollArea>
             )}
+
+            {recentlyMissedTurnsByMe.length > 0 && (
+              <div className="mt-8">
+                <h2 className="text-xl font-semibold text-foreground flex items-center mb-4">
+                  <MessageSquareWarning className="mr-3 h-6 w-6 text-orange-500" />
+                  Turnos No Presentados (Recientes)
+                </h2>
+                <ScrollArea className="h-[200px] border rounded-lg p-1 bg-background">
+                  <div className="space-y-3 p-3">
+                    {recentlyMissedTurnsByMe.map((turn) => (
+                      <Card key={turn.id} className="shadow-sm bg-orange-500/5 border-orange-500/30">
+                        <CardContent className="p-3 flex flex-col sm:flex-row justify-between items-start">
+                          <div className="mb-2 sm:mb-0 flex-grow">
+                            <p className="text-base font-semibold text-orange-700">{turn.turnNumber}</p>
+                            <p className="text-sm text-muted-foreground">{getPatientDisplayName(turn.patientName, turn.patientId)}</p>
+                            <p className="text-xs text-muted-foreground/80">No se presentó: {getTimeAgo(turn.missedAt)}</p>
+                          </div>
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            className="border-orange-500 text-orange-600 hover:bg-orange-500/10 w-full sm:w-auto self-center"
+                            onClick={() => reCallTurn(turn)}
+                            disabled={!!calledTurn}
+                          >
+                            <RotateCcw className="mr-2 h-4 w-4" /> Re-Llamar
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+
+
           </CardContent>
         </Card>
       </div>
