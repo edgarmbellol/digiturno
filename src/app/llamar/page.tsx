@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image"; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle, Info } from "lucide-react";
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
@@ -15,14 +15,6 @@ import { speakText } from '@/lib/tts';
 
 const MAX_RECENTLY_CALLED_TURNS = 4;
 const MAX_UPCOMING_TURNS = 5;
-
-const HOSPITAL_ANNOUNCEMENTS = [
-  "Recuerde lavarse las manos frecuentemente para prevenir infecciones.",
-  "Horario de visitas: Lunes a Viernes de 2:00 PM a 4:00 PM.",
-  "El uso de tapabocas es obligatorio en todas las áreas del hospital.",
-  "Para información sobre campañas de vacunación, acérquese al módulo de información.",
-  "Agradecemos su paciencia y colaboración para mantener un ambiente seguro."
-];
 
 export default function CallPatientPage() {
   const [recentlyCalledTurns, setRecentlyCalledTurns] = useState<Turn[]>([]);
@@ -36,16 +28,6 @@ export default function CallPatientPage() {
   const beepBufferRef = useRef<AudioBuffer | null>(null);
   const userInteractedRef = useRef(false);
   const [showInteractionPrompt, setShowInteractionPrompt] = useState(false);
-
-  const [currentAnnouncementIndex, setCurrentAnnouncementIndex] = useState(0);
-
-  useEffect(() => {
-    const announcementTimer = setInterval(() => {
-      setCurrentAnnouncementIndex(prevIndex => (prevIndex + 1) % HOSPITAL_ANNOUNCEMENTS.length);
-    }, 15000); // Cambiar anuncio cada 15 segundos
-    return () => clearInterval(announcementTimer);
-  }, []);
-
 
   useEffect(() => {
     // console.log("CallPatientPage: useEffect para inicialización de audio ejecutándose.");
@@ -215,11 +197,10 @@ export default function CallPatientPage() {
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
               });
           }, 300); 
-          prevTopCalledTurnIdRef.current = latestCalledTurnId; 
         }
+         prevTopCalledTurnIdRef.current = latestCalledTurnId;
       } else {
         // console.log("Firestore: No hay turnos llamados actualmente.");
-         // Si no hay turnos llamados, pero antes sí había (prevTop era un ID), reseteamos prevTop
         if (prevTopCalledTurnIdRef.current) {
           prevTopCalledTurnIdRef.current = null;
         }
@@ -266,7 +247,7 @@ export default function CallPatientPage() {
         clearTimeout(announcementTimeoutIdRef.current);
       }
     };
-  }, [toast, isLoading]); // Added isLoading to dependency array
+  }, [toast, isLoading]);
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -411,21 +392,6 @@ export default function CallPatientPage() {
             )}
           </CardContent>
         </Card>
-
-        {/* Sección de Anuncios del Hospital */}
-        <Card className="w-full shadow-md bg-blue-500/5 border-blue-500/20">
-          <CardHeader className="p-3 bg-blue-500/10 rounded-t-lg">
-            <CardTitle className="text-lg font-semibold text-blue-700 flex items-center">
-              <Info className="mr-2 h-5 w-5" /> Anuncios del Hospital
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-4 text-center min-h-[60px] flex items-center justify-center">
-            <p className="text-base text-blue-600 animate-fadeIn">
-              {HOSPITAL_ANNOUNCEMENTS[currentAnnouncementIndex]}
-            </p>
-          </CardContent>
-        </Card>
-
       </div>
        <footer className="mt-8 text-center text-xs text-muted-foreground/80 w-full">
         <p>&copy; {new Date().getFullYear()} TurnoFacil. Todos los derechos reservados.</p>
