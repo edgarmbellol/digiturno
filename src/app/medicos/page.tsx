@@ -2,14 +2,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import Image from "next/image"; // Import Image
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Stethoscope, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Search, Hospital, LogOut } from "lucide-react";
+import { Stethoscope, ChevronRight, PlayCircle, ListChecks, AlertTriangle, Hourglass, Ban, CheckCheck, Briefcase, Settings, UserCircle2, Search, Hospital, LogOut, Loader2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,14 +24,19 @@ import {
 import type { Turn } from '@/types/turn';
 import { db, auth } from "@/lib/firebase"; 
 import { signOut } from "firebase/auth"; 
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit } from "firebase/firestore";
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, serverTimestamp, Timestamp, limit, getDoc } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDistanceToNowStrict } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AVAILABLE_CONSULTORIOS } from "@/lib/consultorios";
+
+// import { AVAILABLE_CONSULTORIOS as DEFAULT_CONSULTORIOS_STATIC } from "@/lib/consultorios"; // Old static
+import type { ConsultorioConfig } from "@/config/appConfigTypes";
+import { AVAILABLE_CONSULTORIOS as DEFAULT_CONSULTORIOS_STATIC_FALLBACK } from "@/lib/consultorios";
 
 const CONSULTORIO_STORAGE_KEY = "selectedDoctorConsultorio";
+const APP_CONFIG_COLLECTION = "app_configurations";
+const CONSULTORIOS_DOC_ID = "main_consultorios_config";
 
 export default function MedicosPage() {
   const { currentUser, isLoading: authLoading } = useAuth();
@@ -40,18 +45,53 @@ export default function MedicosPage() {
 
   const [waitingTurns, setWaitingTurns] = useState<Turn[]>([]);
   const [calledTurn, setCalledTurn] = useState<Turn | null>(null);
+  
+  const [availableConsultorios, setAvailableConsultorios] = useState<string[]>([]);
+  const [isLoadingConsultorioConfig, setIsLoadingConsultorioConfig] = useState(true);
   const [selectedConsultorio, setSelectedConsultorio] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const [isLoadingData, setIsLoadingData] = useState(true); // For turns data
   const [searchTerm, setSearchTerm] = useState("");
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const storedConsultorio = localStorage.getItem(CONSULTORIO_STORAGE_KEY);
-      if (storedConsultorio && AVAILABLE_CONSULTORIOS.includes(storedConsultorio)) {
-        setSelectedConsultorio(storedConsultorio);
+  const fetchConsultorioConfiguration = useCallback(async () => {
+    setIsLoadingConsultorioConfig(true);
+    try {
+      const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
+      const consultorioDocSnap = await getDoc(consultorioDocRef);
+      let consultorioNamesData: string[] = [];
+
+      if (consultorioDocSnap.exists()) {
+        consultorioNamesData = (consultorioDocSnap.data() as ConsultorioConfig).names;
+      } else {
+        toast({ title: "Usando Config. por Defecto", description: "No se encontró config. de consultorios en Firestore. Usando valores estáticos.", duration: 5000});
+        consultorioNamesData = [...DEFAULT_CONSULTORIOS_STATIC_FALLBACK];
       }
+      setAvailableConsultorios(consultorioNamesData);
+
+      // Restore selection from localStorage after consultorios are loaded
+      const storedConsultorio = localStorage.getItem(CONSULTORIO_STORAGE_KEY);
+      if (storedConsultorio && consultorioNamesData.includes(storedConsultorio)) {
+        setSelectedConsultorio(storedConsultorio);
+      } else {
+        setSelectedConsultorio(null); // Clear if not valid
+      }
+
+    } catch (error) {
+      console.error("Error fetching consultorio configuration:", error);
+      toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de consultorios. Usando valores por defecto.", variant: "destructive" });
+      setAvailableConsultorios([...DEFAULT_CONSULTORIOS_STATIC_FALLBACK]);
+    } finally {
+      setIsLoadingConsultorioConfig(false);
     }
-  }, []);
+  }, [toast]);
+
+
+  useEffect(() => {
+    if(currentUser) {
+      fetchConsultorioConfiguration();
+    }
+  }, [currentUser, fetchConsultorioConfiguration]);
+
 
   const handleConsultorioSelect = (consultorio: string) => {
     setSelectedConsultorio(consultorio);
@@ -78,19 +118,19 @@ export default function MedicosPage() {
   }, [currentUser, authLoading, router]);
 
   useEffect(() => {
-    if (!currentUser || !selectedConsultorio) {
-        setIsLoading(false); 
+    if (!currentUser || !selectedConsultorio || isLoadingConsultorioConfig) {
+        setIsLoadingData(false); 
         setWaitingTurns([]);
         if(calledTurn) setCalledTurn(null);
         return;
     }
     
-    setIsLoading(true);
+    setIsLoadingData(true);
 
     const qWaiting = query(
       collection(db, "turns"), 
       where("status", "==", "waiting_doctor"),
-      orderBy("completedAt", "asc") 
+      orderBy("completedAt", "asc") // Patients who completed reception first
     );
     const unsubscribeWaiting = onSnapshot(qWaiting, (querySnapshot) => {
       const turnsData: Turn[] = [];
@@ -98,7 +138,7 @@ export default function MedicosPage() {
         turnsData.push({ id: doc.id, ...doc.data() } as Turn);
       });
       setWaitingTurns(turnsData);
-      setIsLoading(false); 
+      setIsLoadingData(false); 
     }, (error) => {
       console.error("Error fetching waiting_doctor turns:", error);
       if (error.message && error.message.includes("indexes?create_composite")) {
@@ -111,30 +151,29 @@ export default function MedicosPage() {
       } else {
         toast({ title: "Error", description: "No se pudieron cargar los pacientes en espera para médico.", variant: "destructive" });
       }
-      setIsLoading(false);
+      setIsLoadingData(false);
     });
     
-    let unsubscribeCalledByThisDoctorListener: (() => void) | null = null;
-    if (currentUser && selectedConsultorio) {
-        const qCalledByThisDoctor = query(
-            collection(db, "turns"),
-            where("status", "==", "called_by_doctor"),
-            where("professionalId", "==", currentUser.uid),
-            where("module", "==", selectedConsultorio), 
-            limit(1)
-        );
+    // Listen for turn called by THIS doctor at THIS consultorio
+    const qCalledByThisDoctor = query(
+        collection(db, "turns"),
+        where("status", "==", "called_by_doctor"),
+        where("professionalId", "==", currentUser.uid), // professionalId stores doctor's UID here
+        where("module", "==", selectedConsultorio), 
+        limit(1)
+    );
 
-        unsubscribeCalledByThisDoctorListener = onSnapshot(qCalledByThisDoctor, (querySnapshot) => {
-            if (!querySnapshot.empty) {
-                const turnDoc = querySnapshot.docs[0];
-                setCalledTurn({ id: turnDoc.id, ...turnDoc.data() } as Turn);
-            } else {
-                setCalledTurn(null);
-            }
-        }, (error) => {
-            console.error("Error fetching current doctor called turn:", error);
-        });
-    }
+    const unsubscribeCalledByThisDoctorListener = onSnapshot(qCalledByThisDoctor, (querySnapshot) => {
+        if (!querySnapshot.empty) {
+            const turnDoc = querySnapshot.docs[0];
+            setCalledTurn({ id: turnDoc.id, ...turnDoc.data() } as Turn);
+        } else {
+            setCalledTurn(null);
+        }
+    }, (error) => {
+        console.error("Error fetching current doctor called turn:", error);
+    });
+    
 
     return () => {
       unsubscribeWaiting();
@@ -142,7 +181,7 @@ export default function MedicosPage() {
         unsubscribeCalledByThisDoctorListener();
       }
     };
-  }, [currentUser, selectedConsultorio, toast]);
+  }, [currentUser, selectedConsultorio, toast, isLoadingConsultorioConfig]);
 
   const filteredWaitingTurns = useMemo(() => {
     if (!searchTerm) return waitingTurns;
@@ -190,6 +229,7 @@ export default function MedicosPage() {
         professionalId: currentUser.uid, 
         professionalDisplayName: currentUser.displayName || currentUser.email, 
       });
+      // setCalledTurn(patientTurn); // Firestore listener will update this
       toast({ title: "Paciente Llamado", description: `Llamando a ${getPatientDisplayName(patientTurn.patientName, patientTurn.patientId)} (${patientTurn.turnNumber}) al ${selectedConsultorio}.` });
     } catch (error) {
       console.error("Error calling patient by doctor: ", error);
@@ -204,17 +244,21 @@ export default function MedicosPage() {
     }
     try {
       const turnRef = doc(db, "turns", calledTurn.id);
-      let updateData: Partial<Turn> = { status };
+      let updateData: Partial<Turn> = { status }; // Base update data
 
       if (status === 'completed_by_doctor') {
         updateData.doctorCompletedAt = serverTimestamp();
       } else if (status === 'missed_by_doctor') {
         updateData.doctorMissedAt = serverTimestamp();
       }
+      // Ensure professionalId and module are also set, in case they weren't (though they should be)
+      updateData.professionalId = currentUser.uid;
+      updateData.professionalDisplayName = currentUser.displayName || currentUser.email;
+      updateData.module = selectedConsultorio;
       
       await updateDoc(turnRef, updateData);
       toast({ title: "Consulta Actualizada", description: `La consulta ${calledTurn.turnNumber} ha sido marcada como ${status === 'completed_by_doctor' ? 'completada' : 'paciente no se presentó'}.`});
-      setCalledTurn(null);
+      // setCalledTurn(null); // Firestore listener will clear this
     } catch (error) {
       console.error("Error updating doctor turn status: ", error);
       toast({ title: "Error", description: "No se pudo actualizar el estado de la consulta.", variant: "destructive" });
@@ -241,13 +285,22 @@ export default function MedicosPage() {
     );
   }
 
+  if (isLoadingConsultorioConfig && !selectedConsultorio) {
+     return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-secondary/30">
+        <Loader2 className="h-16 w-16 text-primary animate-spin" />
+        <p className="text-xl text-muted-foreground mt-4">Cargando configuración de consultorios...</p>
+      </main>
+    );
+  }
+
   if (!selectedConsultorio) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-blue-500/10 to-background">
         <Card className="w-full max-w-lg shadow-xl">
           <CardHeader className="bg-blue-600 text-white p-6 rounded-t-lg">
             <div className="flex flex-col items-center mb-4">
-                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority data-ai-hint="hospital logo"/>
             </div>
             <Hospital className="h-10 w-10 mx-auto mb-3" />
             <CardTitle className="text-2xl font-bold text-center">Seleccionar Consultorio</CardTitle>
@@ -256,16 +309,22 @@ export default function MedicosPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-4">
-            <Select onValueChange={handleConsultorioSelect} value={selectedConsultorio || undefined}>
-              <SelectTrigger className="w-full h-12 text-base">
-                <SelectValue placeholder="Elija un consultorio..." />
-              </SelectTrigger>
-              <SelectContent>
-                {AVAILABLE_CONSULTORIOS.map(mod => (
-                  <SelectItem key={mod} value={mod} className="text-base py-2">{mod}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {isLoadingConsultorioConfig ? (
+                 <div className="flex justify-center items-center p-4"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /> Cargando consultorios...</div>
+            ): availableConsultorios.length === 0 ? (
+                <p className="text-center text-muted-foreground">No hay consultorios configurados. Contacte al administrador.</p>
+            ) : (
+                <Select onValueChange={handleConsultorioSelect} value={selectedConsultorio || undefined}>
+                <SelectTrigger className="w-full h-12 text-base">
+                    <SelectValue placeholder="Elija un consultorio..." />
+                </SelectTrigger>
+                <SelectContent>
+                    {availableConsultorios.map(mod => (
+                    <SelectItem key={mod} value={mod} className="text-base py-2">{mod}</SelectItem>
+                    ))}
+                </SelectContent>
+                </Select>
+            )}
             <p className="text-xs text-muted-foreground text-center">Esta selección se recordará para esta sesión.</p>
           </CardContent>
            <CardFooter className="flex flex-col sm:flex-row gap-2 p-6 justify-center">
@@ -284,7 +343,7 @@ export default function MedicosPage() {
         <Card className="shadow-xl">
           <CardHeader className="bg-blue-600 text-white rounded-t-lg p-6">
             <div className="flex justify-center mb-4">
-                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} />
+                <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} data-ai-hint="hospital logo"/>
             </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between">
               <div>
@@ -357,7 +416,7 @@ export default function MedicosPage() {
               </div>
             </div>
             
-            {isLoading && waitingTurns.length === 0 && !calledTurn ? (
+            {isLoadingData && waitingTurns.length === 0 && !calledTurn ? (
                 <div className="text-center py-10">
                     <Hourglass className="mx-auto h-12 w-12 text-blue-500 animate-spin" />
                     <p className="text-lg text-muted-foreground mt-2">Buscando pacientes...</p>
@@ -395,7 +454,7 @@ export default function MedicosPage() {
                                <Button 
                                 size="sm" 
                                 className="bg-green-500 text-white hover:bg-green-600 w-full sm:w-auto disabled:opacity-60"
-                                disabled={!!calledTurn || isLoading}
+                                disabled={!!calledTurn || isLoadingData}
                               >
                                 Llamar Paciente
                                 <ChevronRight className="ml-2 h-4 w-4" />
@@ -443,4 +502,3 @@ export default function MedicosPage() {
     </main>
   );
 }
-    

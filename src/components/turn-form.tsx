@@ -4,8 +4,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { useState } from "react";
-import Image from "next/image"; // Import Image
+import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -25,13 +25,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus, Accessibility } from "lucide-react";
+import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus, Accessibility, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { db } from "@/lib/firebase"; 
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
 import type { Turn } from '@/types/turn';
 import { useToast } from "@/hooks/use-toast";
-import { AVAILABLE_SERVICES } from "@/lib/services";
+
+// import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC } from "@/lib/services"; // Old static
+import type { ServiceConfig, ServiceDefinitionFront } from "@/config/appConfigTypes";
+import { serviceIconMap, DefaultServiceIcon } from "@/lib/iconMapping";
+import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC_FALLBACK } from "@/lib/services";
+
+
+const SERVICE_CONFIG_COLLECTION = "service_configurations";
 
 const specialConditions: { name: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">; label: string; icon: LucideIcon }[] = [
   { name: "isSenior", label: "Adulto Mayor", icon: UserCheck },
@@ -82,6 +89,48 @@ export default function TurnForm() {
 
   const [isFetchingPatientName, setIsFetchingPatientName] = useState(false);
   const [showManualNameInput, setShowManualNameInput] = useState(false);
+
+  const [availableServices, setAvailableServices] = useState<ServiceDefinitionFront[]>([]);
+  const [isLoadingServiceConfig, setIsLoadingServiceConfig] = useState(true);
+
+
+  const fetchServiceConfiguration = useCallback(async () => {
+    setIsLoadingServiceConfig(true);
+    try {
+      const serviceSnapshot = await getDocs(collection(db, SERVICE_CONFIG_COLLECTION));
+      let servicesData: ServiceDefinitionFront[] = [];
+      if (serviceSnapshot.empty) {
+        toast({ title: "Usando Config. por Defecto", description: "No se encontró config. de servicios en Firestore. Usando valores estáticos.", duration: 5000});
+        servicesData = DEFAULT_SERVICES_STATIC_FALLBACK.map(s => ({
+          ...s,
+          id: s.value, 
+        }));
+      } else {
+        servicesData = serviceSnapshot.docs.map(doc => {
+          const data = doc.data() as ServiceConfig;
+          return {
+            id: data.id,
+            value: data.id,
+            label: data.label,
+            icon: serviceIconMap[data.iconName] || DefaultServiceIcon,
+            prefix: data.prefix,
+            modules: data.modules,
+          };
+        });
+      }
+      setAvailableServices(servicesData);
+    } catch (error) {
+      console.error("Error fetching service configuration:", error);
+      toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de servicios. Usando valores por defecto.", variant: "destructive" });
+      setAvailableServices(DEFAULT_SERVICES_STATIC_FALLBACK.map(s => ({ ...s, id: s.value })));
+    } finally {
+      setIsLoadingServiceConfig(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    fetchServiceConfiguration();
+  }, [fetchServiceConfiguration]);
 
 
   const form = useForm<FormValues>({
@@ -181,9 +230,9 @@ export default function TurnForm() {
 
   async function onSubmit(data: FormValues) {
     setIsSubmitting(true);
-    const selectedServiceInfo = AVAILABLE_SERVICES.find(s => s.value === data.service);
+    const selectedServiceInfo = availableServices.find(s => s.id === data.service);
     if (!selectedServiceInfo) {
-      toast({ title: "Error", description: "Servicio no encontrado.", variant: "destructive" });
+      toast({ title: "Error", description: "Servicio no encontrado o configuración no cargada.", variant: "destructive" });
       setIsSubmitting(false);
       return;
     }
@@ -241,7 +290,7 @@ export default function TurnForm() {
       <Card className="w-full max-w-lg shadow-xl transform transition-all duration-300">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
           <div className="flex flex-col items-center mb-4">
-            <Image src="/logo-hospital.png" alt="Logo Hospital" width={100} height={96} priority />
+            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority data-ai-hint="hospital logo" />
           </div>
           <div className="mx-auto bg-background/20 text-primary-foreground p-3 rounded-full w-fit mb-3">
             <PartyPopper className="h-10 w-10" />
@@ -282,7 +331,7 @@ export default function TurnForm() {
     <Card className="w-full max-w-lg shadow-xl">
       <CardHeader className="bg-primary text-primary-foreground p-6 rounded-t-lg">
         <div className="flex flex-col items-center mb-4">
-          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority />
+          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={100} height={96} priority data-ai-hint="hospital logo" />
         </div>
         <CardTitle className="text-3xl font-bold text-center">TurnoFacil</CardTitle>
         <CardDescription className="text-center text-primary-foreground/80 pt-1">
@@ -298,27 +347,33 @@ export default function TurnForm() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="text-base font-semibold">Tipo de Servicio</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || ""}>
-                    <FormControl>
-                      <SelectTrigger className="text-base h-12">
-                        <SelectValue
-                          placeholder={
-                            <span className="text-muted-foreground">Seleccione un servicio</span>
-                          }
-                        />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {AVAILABLE_SERVICES.map((service) => (
-                        <SelectItem key={service.value} value={service.value} className="text-base py-2">
-                          <div className="flex items-center gap-2">
-                            <service.icon className="h-5 w-5 text-muted-foreground" />
-                            {service.label}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                   {isLoadingServiceConfig ? (
+                     <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Cargando servicios...</div>
+                   ) : availableServices.length === 0 ? (
+                     <p className="text-sm text-destructive">No hay servicios configurados. Contacte al administrador.</p>
+                   ) : (
+                    <Select onValueChange={field.onChange} value={field.value || ""} disabled={availableServices.length === 0}>
+                        <FormControl>
+                        <SelectTrigger className="text-base h-12">
+                            <SelectValue
+                            placeholder={
+                                <span className="text-muted-foreground">Seleccione un servicio</span>
+                            }
+                            />
+                        </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                        {availableServices.map((service) => (
+                            <SelectItem key={service.id} value={service.id} className="text-base py-2">
+                            <div className="flex items-center gap-2">
+                                <service.icon className="h-5 w-5 text-muted-foreground" />
+                                {service.label}
+                            </div>
+                            </SelectItem>
+                        ))}
+                        </SelectContent>
+                    </Select>
+                   )}
                   <FormMessage />
                 </FormItem>
               )}
@@ -386,6 +441,7 @@ export default function TurnForm() {
                       <FormItem
                         className={`flex flex-row items-center space-x-3 space-y-0 p-3 border rounded-md transition-colors cursor-pointer hover:bg-secondary/70
                                     ${field.value ? 'bg-secondary border-primary ring-2 ring-primary' : 'bg-card hover:border-primary/50'}`}
+                        // Removed onClick from FormItem, logic is in Checkbox's onCheckedChange
                       >
                         <FormControl>
                           <Checkbox
@@ -395,34 +451,32 @@ export default function TurnForm() {
                                 field.onChange(isChecking); // Update the specific field
 
                                 if (item.name === "isNone") {
-                                    if (isChecking) {
+                                    if (isChecking) { // if "isNone" is being checked
                                         setValue("isSenior", false, { shouldValidate: false });
                                         setValue("isPregnant", false, { shouldValidate: false });
                                         setValue("isDisabled", false, { shouldValidate: false });
                                     }
                                 } else { // A priority condition is being changed
-                                    if (isChecking) {
+                                    if (isChecking) { // if a priority condition is being checked
                                         setValue("isNone", false, { shouldValidate: false });
                                         // Uncheck other priority conditions
                                         if (item.name !== "isSenior") setValue("isSenior", false, { shouldValidate: false });
                                         if (item.name !== "isPregnant") setValue("isPregnant", false, { shouldValidate: false });
                                         if (item.name !== "isDisabled") setValue("isDisabled", false, { shouldValidate: false });
-                                    } else {
-                                        // If this priority is being unchecked, check if any other priority is active.
-                                        // If not, 'isNone' must become true.
-                                        const anyOtherPriorityActive =
-                                            (item.name === "isSenior" ? false : getValues("isSenior")) ||
-                                            (item.name === "isPregnant" ? false : getValues("isPregnant")) ||
-                                            (item.name === "isDisabled" ? false : getValues("isDisabled"));
-                                        if (!anyOtherPriorityActive) {
-                                            setValue("isNone", true, { shouldValidate: false });
-                                        }
                                     }
+                                }
+                                // After all changes, if no priority is selected, check "isNone"
+                                const senior = getValues("isSenior");
+                                const pregnant = getValues("isPregnant");
+                                const disabled = getValues("isDisabled");
+                                if (!senior && !pregnant && !disabled && item.name !== "isNone" && !isChecking) {
+                                   setValue("isNone", true, {shouldValidate: false});
                                 }
                                 trigger(["isNone", "isSenior", "isPregnant", "isDisabled"]);
                             }}
                             aria-label={item.label}
                             className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                            // disabled attribute removed
                           />
                         </FormControl>
                         <item.icon className={`h-5 w-5 ${field.value ? 'text-primary' : 'text-foreground'}`} />
@@ -440,10 +494,10 @@ export default function TurnForm() {
                <FormMessage>{form.formState.errors.isNone?.message}</FormMessage>
             </FormItem>
 
-            <Button type="submit" className="w-full text-lg py-6 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting || isFetchingPatientName}>
-              {isSubmitting ? "Registrando..." : (isFetchingPatientName ? "Verificando Cédula..." : "Solicitar Turno")}
-              {!isSubmitting && !isFetchingPatientName && <CheckCircle2 className="ml-2 h-6 w-6" />}
-              {isFetchingPatientName && <Loader2 className="ml-2 h-6 w-6 animate-spin" />}
+            <Button type="submit" className="w-full text-lg py-6 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting || isFetchingPatientName || isLoadingServiceConfig || availableServices.length === 0}>
+              {isSubmitting ? "Registrando..." : (isFetchingPatientName ? "Verificando Cédula..." : (isLoadingServiceConfig ? "Cargando Servicios..." : "Solicitar Turno"))}
+              {!isSubmitting && !isFetchingPatientName && !isLoadingServiceConfig && <CheckCircle2 className="ml-2 h-6 w-6" />}
+              {(isFetchingPatientName || isLoadingServiceConfig) && !isSubmitting && <Loader2 className="ml-2 h-6 w-6 animate-spin" />}
             </Button>
           </form>
         </Form>
@@ -451,4 +505,3 @@ export default function TurnForm() {
     </Card>
   );
 }
-    

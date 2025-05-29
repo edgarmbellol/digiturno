@@ -1,10 +1,10 @@
 
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -18,14 +18,17 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from "@/hooks/use-toast";
 import { auth, db } from "@/lib/firebase";
 import { signOut, createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { collection, query, where, onSnapshot, Timestamp, or } from "firebase/firestore";
-import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock, Settings2, Hospital, Trash2, PlusCircle } from "lucide-react";
+import { collection, query, where, onSnapshot, Timestamp, or, doc, getDoc, setDoc, getDocs, updateDoc, arrayUnion, arrayRemove, writeBatch } from "firebase/firestore";
+import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock, Settings2, Hospital, Trash2, PlusCircle, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { Turn } from "@/types/turn";
 import { formatDistanceToNowStrict, intervalToDuration } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { AVAILABLE_SERVICES, type ServiceDefinition } from "@/lib/services";
-import { AVAILABLE_CONSULTORIOS } from "@/lib/consultorios";
+
+import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC } from "@/lib/services";
+import { AVAILABLE_CONSULTORIOS as DEFAULT_CONSULTORIOS_STATIC } from "@/lib/consultorios";
+import type { ServiceConfig, ConsultorioConfig, ServiceDefinitionFront } from "@/config/appConfigTypes";
+import { serviceIconMap, DefaultServiceIcon } from "@/lib/iconMapping";
 
 const ADMIN_EMAIL = "edgarmbellol@gmail.com";
 const MAX_WAIT_TIME_PENDING_MINUTES = 15;
@@ -43,10 +46,9 @@ interface PatientWithLongWait extends Turn {
   waitType: 'ventanilla' | 'medico';
 }
 
-// Type for editable services
-interface EditableServiceDefinition extends ServiceDefinition {
-  // modules will be mutable here
-}
+const SERVICE_CONFIG_COLLECTION = "service_configurations";
+const APP_CONFIG_COLLECTION = "app_configurations";
+const CONSULTORIOS_DOC_ID = "main_consultorios_config";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -57,16 +59,75 @@ export default function AdminPage() {
   const [patientsWithLongWait, setPatientsWithLongWait] = useState<PatientWithLongWait[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  // State for managing services and modules
-  const [editableServices, setEditableServices] = useState<EditableServiceDefinition[]>(() =>
-    AVAILABLE_SERVICES.map(service => ({ ...service, modules: [...service.modules] })) // Deep copy modules
-  );
-  const [selectedServiceForModuleMgmt, setSelectedServiceForModuleMgmt] = useState<string>(AVAILABLE_SERVICES[0]?.value || "");
-  const [newModuleName, setNewModuleName] = useState("");
+  const [serviceConfigs, setServiceConfigs] = useState<ServiceConfig[]>([]);
+  const [consultorioNames, setConsultorioNames] = useState<string[]>([]);
+  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
 
-  // State for managing consultorios
-  const [editableConsultorios, setEditableConsultorios] = useState<string[]>([...AVAILABLE_CONSULTORIOS]);
+  const [selectedServiceForModuleMgmt, setSelectedServiceForModuleMgmt] = useState<string>("");
+  const [newModuleName, setNewModuleName] = useState("");
   const [newConsultorioName, setNewConsultorioName] = useState("");
+
+
+  // Map Firestore data to frontend usable ServiceDefinitionFront
+  const editableServices: ServiceDefinitionFront[] = useMemo(() => {
+    return serviceConfigs.map(sc => ({
+      ...sc,
+      value: sc.id, // 'id' from Firestore is 'value' for Select
+      icon: serviceIconMap[sc.iconName] || DefaultServiceIcon,
+    }));
+  }, [serviceConfigs]);
+
+
+  const fetchAppConfiguration = useCallback(async () => {
+    setIsLoadingConfig(true);
+    try {
+      // Fetch Service Configurations
+      const serviceSnapshot = await getDocs(collection(db, SERVICE_CONFIG_COLLECTION));
+      if (serviceSnapshot.empty) {
+        // If Firestore is empty, use static defaults and offer to save them
+        toast({ title: "Configuración Inicial", description: "No se encontró configuración de servicios en Firestore. Usando valores por defecto. Guarde para persistir.", duration: 7000});
+        const initialServicesFromStatic = DEFAULT_SERVICES_STATIC.map(s => ({
+          id: s.value,
+          label: s.label,
+          // Find icon name string from map key by component (this is a bit reverse, better to store name)
+          iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings",
+          prefix: s.prefix,
+          modules: [...s.modules],
+        }));
+        setServiceConfigs(initialServicesFromStatic);
+      } else {
+        const servicesData = serviceSnapshot.docs.map(doc => doc.data() as ServiceConfig);
+        setServiceConfigs(servicesData);
+      }
+
+      // Fetch Consultorio Configurations
+      const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
+      const consultorioDocSnap = await getDoc(consultorioDocRef);
+      if (consultorioDocSnap.exists()) {
+        setConsultorioNames((consultorioDocSnap.data() as ConsultorioConfig).names);
+      } else {
+         toast({ title: "Configuración Inicial", description: "No se encontró configuración de consultorios en Firestore. Usando valores por defecto. Guarde para persistir.", duration: 7000});
+        setConsultorioNames([...DEFAULT_CONSULTORIOS_STATIC]);
+      }
+    } catch (error) {
+      console.error("Error fetching app configuration:", error);
+      toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de servicios/consultorios.", variant: "destructive" });
+      // Fallback to static if DB fetch fails
+      setServiceConfigs(DEFAULT_SERVICES_STATIC.map(s => ({
+        id: s.value, label: s.label, iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings", prefix: s.prefix, modules: [...s.modules]
+      })));
+      setConsultorioNames([...DEFAULT_CONSULTORIOS_STATIC]);
+    } finally {
+      setIsLoadingConfig(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    if (currentUser?.email === ADMIN_EMAIL) {
+      fetchAppConfiguration();
+    }
+  }, [currentUser, fetchAppConfiguration]);
+
 
   const createUserForm = useForm<CreateUserFormValues>({
     resolver: zodResolver(createUserSchema),
@@ -168,53 +229,139 @@ export default function AdminPage() {
   };
 
   // Module Management Functions
-  const handleAddModule = () => {
+  const handleAddModule = async () => {
     if (!newModuleName.trim() || !selectedServiceForModuleMgmt) return;
-    setEditableServices(prevServices =>
-      prevServices.map(service =>
-        service.value === selectedServiceForModuleMgmt
-          ? { ...service, modules: [...service.modules, newModuleName.trim()] }
-          : service
-      )
-    );
-    setNewModuleName("");
-    toast({ title: "Módulo Añadido", description: `Módulo "${newModuleName.trim()}" añadido a ${editableServices.find(s => s.value === selectedServiceForModuleMgmt)?.label}. (Cambio no persistente)` });
+    const serviceId = selectedServiceForModuleMgmt; // selectedServiceForModuleMgmt is the service ID
+
+    const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
+    try {
+      await updateDoc(serviceRef, {
+        modules: arrayUnion(newModuleName.trim())
+      });
+      setServiceConfigs(prevConfigs =>
+        prevConfigs.map(sc =>
+          sc.id === serviceId
+            ? { ...sc, modules: [...sc.modules, newModuleName.trim()] }
+            : sc
+        )
+      );
+      setNewModuleName("");
+      toast({ title: "Módulo Añadido", description: `Módulo "${newModuleName.trim()}" añadido a ${serviceConfigs.find(s => s.id === serviceId)?.label} y guardado en Firestore.` });
+    } catch (error) {
+      console.error("Error adding module to Firestore:", error);
+      toast({ title: "Error al Guardar", description: "No se pudo añadir el módulo a Firestore.", variant: "destructive" });
+    }
   };
 
-  const handleRemoveModule = (serviceValue: string, moduleNameToRemove: string) => {
-    setEditableServices(prevServices =>
-      prevServices.map(service =>
-        service.value === serviceValue
-          ? { ...service, modules: service.modules.filter(m => m !== moduleNameToRemove) }
-          : service
-      )
-    );
-    toast({ title: "Módulo Eliminado", description: `Módulo "${moduleNameToRemove}" eliminado de ${editableServices.find(s => s.value === serviceValue)?.label}. (Cambio no persistente)` });
+  const handleRemoveModule = async (serviceValue: string, moduleNameToRemove: string) => {
+     const serviceId = serviceValue;
+     const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
+    try {
+      await updateDoc(serviceRef, {
+        modules: arrayRemove(moduleNameToRemove)
+      });
+      setServiceConfigs(prevConfigs =>
+        prevConfigs.map(sc =>
+          sc.id === serviceId
+            ? { ...sc, modules: sc.modules.filter(m => m !== moduleNameToRemove) }
+            : sc
+        )
+      );
+      toast({ title: "Módulo Eliminado", description: `Módulo "${moduleNameToRemove}" eliminado de ${serviceConfigs.find(s => s.id === serviceId)?.label} y guardado en Firestore.` });
+    } catch (error) {
+      console.error("Error removing module from Firestore:", error);
+      toast({ title: "Error al Guardar", description: "No se pudo eliminar el módulo de Firestore.", variant: "destructive" });
+    }
   };
 
   // Consultorio Management Functions
-  const handleAddConsultorio = () => {
+  const handleAddConsultorio = async () => {
     if (!newConsultorioName.trim()) return;
-    setEditableConsultorios(prev => [...prev, newConsultorioName.trim()]);
-    setNewConsultorioName("");
-    toast({ title: "Consultorio Añadido", description: `Consultorio "${newConsultorioName.trim()}" añadido. (Cambio no persistente)` });
+    const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
+    try {
+      // Ensure document exists before trying to update array, or use setDoc with merge
+      const currentConfigSnap = await getDoc(consultorioDocRef);
+      if (currentConfigSnap.exists()) {
+        await updateDoc(consultorioDocRef, {
+          names: arrayUnion(newConsultorioName.trim())
+        });
+      } else {
+        await setDoc(consultorioDocRef, { id: CONSULTORIOS_DOC_ID, names: [newConsultorioName.trim()] });
+      }
+      setConsultorioNames(prev => [...prev, newConsultorioName.trim()]);
+      setNewConsultorioName("");
+      toast({ title: "Consultorio Añadido", description: `Consultorio "${newConsultorioName.trim()}" añadido y guardado en Firestore.` });
+    } catch (error) {
+       console.error("Error adding consultorio to Firestore:", error);
+       toast({ title: "Error al Guardar", description: "No se pudo añadir el consultorio a Firestore.", variant: "destructive" });
+    }
   };
 
-  const handleRemoveConsultorio = (consultorioNameToRemove: string) => {
-    setEditableConsultorios(prev => prev.filter(c => c !== consultorioNameToRemove));
-    toast({ title: "Consultorio Eliminado", description: `Consultorio "${consultorioNameToRemove}" eliminado. (Cambio no persistente)` });
+  const handleRemoveConsultorio = async (consultorioNameToRemove: string) => {
+    const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
+    try {
+      await updateDoc(consultorioDocRef, {
+          names: arrayRemove(consultorioNameToRemove)
+      });
+      setConsultorioNames(prev => prev.filter(c => c !== consultorioNameToRemove));
+      toast({ title: "Consultorio Eliminado", description: `Consultorio "${consultorioNameToRemove}" eliminado y guardado en Firestore.` });
+    } catch (error) {
+       console.error("Error removing consultorio from Firestore:", error);
+       toast({ title: "Error al Guardar", description: "No se pudo eliminar el consultorio de Firestore.", variant: "destructive" });
+    }
   };
+  
+  // Initial Save of Default Config to Firestore (if empty)
+  const handleInitialSaveConfig = async () => {
+    const batch = writeBatch(db);
+
+    // Services
+    const servicesFromStatic = DEFAULT_SERVICES_STATIC.map(s => ({
+      id: s.value,
+      label: s.label,
+      iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings",
+      prefix: s.prefix,
+      modules: [...s.modules],
+    }));
+
+    servicesFromStatic.forEach(serviceConfig => {
+      const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceConfig.id);
+      batch.set(serviceRef, serviceConfig);
+    });
+    
+    // Consultorios
+    const consultorioConfig: ConsultorioConfig = {
+      id: CONSULTORIOS_DOC_ID,
+      names: [...DEFAULT_CONSULTORIOS_STATIC]
+    };
+    const consultorioRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
+    batch.set(consultorioRef, consultorioConfig);
+
+    try {
+      await batch.commit();
+      toast({ title: "Configuración Guardada", description: "La configuración por defecto ha sido guardada en Firestore." });
+      // Re-fetch to ensure UI is in sync with DB
+      await fetchAppConfiguration();
+    } catch (error) {
+      console.error("Error saving initial config to Firestore:", error);
+      toast({ title: "Error al Guardar Config.", description: "No se pudo guardar la configuración inicial en Firestore.", variant: "destructive" });
+    }
+  };
+
 
   const currentModulesForSelectedService = useMemo(() => {
-    return editableServices.find(s => s.value === selectedServiceForModuleMgmt)?.modules || [];
-  }, [editableServices, selectedServiceForModuleMgmt]);
+    // Use serviceConfigs which is ServiceConfig[] (data from DB or initial static)
+    return serviceConfigs.find(s => s.id === selectedServiceForModuleMgmt)?.modules || [];
+  }, [serviceConfigs, selectedServiceForModuleMgmt]);
 
 
-  if (authLoading) {
+  if (authLoading || isLoadingConfig) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
-        <p className="text-xl text-muted-foreground mt-4">Verificando acceso...</p>
+        <p className="text-xl text-muted-foreground mt-4">
+          {authLoading ? "Verificando acceso..." : "Cargando configuración..."}
+        </p>
       </main>
     );
   }
@@ -286,6 +433,14 @@ export default function AdminPage() {
                 <CardDescription className="text-muted-foreground pt-1">
                     Gestione usuarios, monitoree tiempos de espera y configure el sistema.
                 </CardDescription>
+                 <div className="mt-4">
+                    <Button onClick={handleInitialSaveConfig} variant="outline" size="sm">
+                        Inicializar/Restablecer Configuración en DB
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        (Use esto si la configuración en Firestore está vacía o para restaurar los valores por defecto de los archivos).
+                    </p>
+                </div>
             </CardHeader>
              <CardContent className="p-0 sm:p-2 md:p-4">
                 <Tabs defaultValue="crear-usuario" className="w-full">
@@ -332,8 +487,8 @@ export default function AdminPage() {
                           </CardContent>
                           <CardFooter>
                             <Button type="submit" className="w-full text-lg py-3" disabled={isCreatingUser}>
+                              {isCreatingUser ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <UserPlus className="mr-2 h-5 w-5" />}
                               {isCreatingUser ? "Creando..." : "Crear Profesional"}
-                              {!isCreatingUser && <UserPlus className="ml-2 h-5 w-5" />}
                             </Button>
                           </CardFooter>
                         </form>
@@ -384,8 +539,7 @@ export default function AdminPage() {
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2"><Settings2 className="h-6 w-6" />Gestionar Ventanillas por Servicio</CardTitle>
                         <CardDescription>
-                          Añada o elimine ventanillas para cada servicio. 
-                          <span className="block text-xs text-amber-600 mt-1">Nota: Estos cambios son temporales para esta sesión y no se guardan permanentemente.</span>
+                          Añada o elimine ventanillas para cada servicio. Los cambios se guardan en Firestore.
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-6">
@@ -396,7 +550,7 @@ export default function AdminPage() {
                               <SelectValue placeholder="Seleccione un servicio" />
                             </SelectTrigger>
                             <SelectContent>
-                              {editableServices.map(service => (
+                              {editableServices.map(service => ( // Use editableServices (ServiceDefinitionFront)
                                 <SelectItem key={service.value} value={service.value}>{service.label}</SelectItem>
                               ))}
                             </SelectContent>
@@ -422,7 +576,7 @@ export default function AdminPage() {
                                             <AlertDialogHeader>
                                                 <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
                                                 <AlertDialogDescription>
-                                                ¿Está seguro que desea eliminar la ventanilla "{moduleName}"?
+                                                ¿Está seguro que desea eliminar la ventanilla "{moduleName}"? Este cambio se guardará en Firestore.
                                                 </AlertDialogDescription>
                                             </AlertDialogHeader>
                                             <AlertDialogFooter>
@@ -460,16 +614,15 @@ export default function AdminPage() {
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2"><Hospital className="h-6 w-6" />Gestionar Consultorios Médicos</CardTitle>
                         <CardDescription>
-                          Añada o elimine consultorios médicos.
-                          <span className="block text-xs text-amber-600 mt-1">Nota: Estos cambios son temporales para esta sesión y no se guardan permanentemente.</span>
+                          Añada o elimine consultorios médicos. Los cambios se guardan en Firestore.
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="space-y-4">
-                         {editableConsultorios.length === 0 ? (
+                         {consultorioNames.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No hay consultorios definidos.</p>
                           ) : (
                             <ul className="space-y-2 border rounded-md p-3 max-h-72 overflow-y-auto">
-                            {editableConsultorios.map(consultorioName => (
+                            {consultorioNames.map(consultorioName => (
                                 <li key={consultorioName} className="flex items-center justify-between p-2 bg-secondary/30 rounded">
                                 <span>{consultorioName}</span>
                                 <AlertDialog>
@@ -482,7 +635,7 @@ export default function AdminPage() {
                                         <AlertDialogHeader>
                                             <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                            ¿Está seguro que desea eliminar el consultorio "{consultorioName}"?
+                                            ¿Está seguro que desea eliminar el consultorio "{consultorioName}"? Este cambio se guardará en Firestore.
                                             </AlertDialogDescription>
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
@@ -523,6 +676,3 @@ export default function AdminPage() {
     </main>
   );
 }
-
-
-    
