@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import Image from "next/image"; // Import Image
+import Image from "next/image"; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
 import type { Turn } from '@/types/turn';
@@ -42,7 +42,7 @@ export default function CallPatientPage() {
         const bufferSize = sampleRate * duration;
         const buffer = context.createBuffer(1, bufferSize, sampleRate);
         const data = buffer.getChannelData(0);
-        const frequency = 880;
+        const frequency = 880; 
         for (let i = 0; i < bufferSize; i++) {
           data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; 
         }
@@ -170,14 +170,20 @@ export default function CallPatientPage() {
 
           const patientDisplayName = getPatientDisplayName(latestCalledTurn.patientName, latestCalledTurn.patientId);
           const moduleName = latestCalledTurn.module || (latestCalledTurn.status === 'called_by_doctor' ? "Consultorio" : "Módulo");
+          
           let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
+          
+          if (latestCalledTurn.status === 'called_by_doctor' && latestCalledTurn.professionalDisplayName) {
+            announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}. Será atendido por ${latestCalledTurn.professionalDisplayName}.`;
+          }
           
           // console.log("Preparando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
 
           if (announcementTimeoutIdRef.current) {
             clearTimeout(announcementTimeoutIdRef.current);
           }
-
+          
+          // console.log(`Antes de setTimeout para speakText. AudioContext State: ${audioContextRef.current?.state}, User Interacted: ${userInteractedRef.current}`);
           announcementTimeoutIdRef.current = setTimeout(() => {
             // console.log("Dentro de setTimeout - Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
             if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
@@ -186,7 +192,7 @@ export default function CallPatientPage() {
                  return;
             }
             speakText(announcement, 'es-CO') 
-              .then(() => {/* console.log("Anuncio de voz completado.") */})
+              .then(() => { /*console.log("Anuncio de voz completado.")*/ })
               .catch(err => {
                 console.error("Error al pronunciar el anuncio:", err);
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
@@ -235,8 +241,11 @@ export default function CallPatientPage() {
       // console.log("CallPatientPage: Limpiando suscripciones de Firestore.");
       unsubscribeCalled();
       unsubscribePending();
+      if (announcementTimeoutIdRef.current) {
+        clearTimeout(announcementTimeoutIdRef.current);
+      }
     };
-  }, [toast]); 
+  }, [toast]); // Added toast to dependency array as it's used inside
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -273,7 +282,7 @@ export default function CallPatientPage() {
   return (
     <main className="flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6">
       <div className="w-full flex justify-center mb-6">
-        <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={120} height={115} priority />
+        <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={120} height={115} priority data-ai-hint="hospital logo"/>
       </div>
       {showInteractionPrompt && !userInteractedRef.current && (
         <Card className="w-full max-w-xl mb-4 shadow-lg border-2 border-yellow-500 bg-yellow-500/10">
@@ -335,6 +344,11 @@ export default function CallPatientPage() {
                     <p className={`text-md sm:text-base ${index === 0 ? 'text-accent-foreground/80' : 'text-muted-foreground'}`}>
                       Servicio: {turn.service}
                     </p>
+                    {turn.status === 'called_by_doctor' && turn.professionalDisplayName && (
+                      <p className={`text-sm sm:text-base mt-1 ${index === 0 ? 'text-accent-foreground/80 font-medium' : 'text-muted-foreground/90'}`}>
+                        Atiende: {turn.professionalDisplayName}
+                      </p>
+                    )}
                     {turn.calledAt && (
                        <p className={`text-xs mt-2 ${index === 0 ? 'text-accent-foreground/70' : 'text-muted-foreground/70'}`}>
                         Llamado {getTimeAgo(turn.calledAt)}
