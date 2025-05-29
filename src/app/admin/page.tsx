@@ -20,9 +20,9 @@ import { useToast } from "@/hooks/use-toast";
 import { auth, db } from "@/lib/firebase";
 import { signOut, createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { collection, query, where, onSnapshot, Timestamp, or, doc, getDoc, setDoc, getDocs, updateDoc, arrayUnion, arrayRemove, writeBatch } from "firebase/firestore";
-import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock, Settings2, Hospital, Trash2, PlusCircle, Loader2, ClipboardList, PlayCircle, CheckCircle2, UserX } from "lucide-react";
+import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock, Settings2, Hospital, Trash2, PlusCircle, Loader2, ClipboardList, PlayCircle, CheckCircle2, UserX, Cog } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import type { Turn, TurnStatus } from "@/types/turn";
+import type { Turn } from "@/types/turn";
 import { formatDistanceToNowStrict, intervalToDuration, startOfDay, endOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -32,8 +32,10 @@ import type { ServiceConfig, ConsultorioConfig, ServiceDefinitionFront } from "@
 import { serviceIconMap, DefaultServiceIcon } from "@/lib/iconMapping";
 
 const ADMIN_EMAIL = "edgarmbellol@gmail.com";
-const MAX_WAIT_TIME_PENDING_MINUTES = 15;
-const MAX_WAIT_TIME_DOCTOR_MINUTES = 30;
+
+// Default values, will be overridden by Firestore config if available
+const DEFAULT_MAX_WAIT_TIME_PENDING_MINUTES = 15;
+const DEFAULT_MAX_WAIT_TIME_DOCTOR_MINUTES = 30;
 
 const createUserSchema = z.object({
   displayName: z.string().min(1, "El nombre del profesional es requerido."),
@@ -55,9 +57,16 @@ interface TurnStats {
   missedToday: number;
 }
 
+interface AlertThresholds {
+  maxWaitTimePendingMinutes: number;
+  maxWaitTimeDoctorMinutes: number;
+}
+
 const SERVICE_CONFIG_COLLECTION = "service_configurations";
 const APP_CONFIG_COLLECTION = "app_configurations";
 const CONSULTORIOS_DOC_ID = "main_consultorios_config";
+const ALERT_THRESHOLDS_DOC_ID = "alert_thresholds";
+
 
 export default function AdminPage() {
   const router = useRouter();
@@ -70,7 +79,12 @@ export default function AdminPage() {
 
   const [serviceConfigs, setServiceConfigs] = useState<ServiceConfig[]>([]);
   const [consultorioNames, setConsultorioNames] = useState<string[]>([]);
+  const [alertThresholds, setAlertThresholds] = useState<AlertThresholds>({
+    maxWaitTimePendingMinutes: DEFAULT_MAX_WAIT_TIME_PENDING_MINUTES,
+    maxWaitTimeDoctorMinutes: DEFAULT_MAX_WAIT_TIME_DOCTOR_MINUTES,
+  });
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
+  const [isLoadingAlertConfig, setIsLoadingAlertConfig] = useState(true);
 
   const [selectedServiceForModuleMgmt, setSelectedServiceForModuleMgmt] = useState<string>("");
   const [newModuleName, setNewModuleName] = useState("");
@@ -84,6 +98,10 @@ export default function AdminPage() {
     missedToday: 0,
   });
   const [isLoadingStats, setIsLoadingStats] = useState(true);
+
+  const [editablePendingThreshold, setEditablePendingThreshold] = useState(DEFAULT_MAX_WAIT_TIME_PENDING_MINUTES.toString());
+  const [editableDoctorThreshold, setEditableDoctorThreshold] = useState(DEFAULT_MAX_WAIT_TIME_DOCTOR_MINUTES.toString());
+  const [isSavingAlertConfig, setIsSavingAlertConfig] = useState(false);
 
 
   // Map Firestore data to frontend usable ServiceDefinitionFront
@@ -132,11 +150,40 @@ export default function AdminPage() {
     }
   }, [toast]);
 
+  const fetchAlertThresholds = useCallback(async () => {
+    setIsLoadingAlertConfig(true);
+    try {
+      const thresholdsDocRef = doc(db, APP_CONFIG_COLLECTION, ALERT_THRESHOLDS_DOC_ID);
+      const thresholdsDocSnap = await getDoc(thresholdsDocRef);
+      if (thresholdsDocSnap.exists()) {
+        const data = thresholdsDocSnap.data() as AlertThresholds;
+        setAlertThresholds(data);
+        setEditablePendingThreshold(data.maxWaitTimePendingMinutes.toString());
+        setEditableDoctorThreshold(data.maxWaitTimeDoctorMinutes.toString());
+      } else {
+        setAlertThresholds({
+            maxWaitTimePendingMinutes: DEFAULT_MAX_WAIT_TIME_PENDING_MINUTES,
+            maxWaitTimeDoctorMinutes: DEFAULT_MAX_WAIT_TIME_DOCTOR_MINUTES,
+        });
+        setEditablePendingThreshold(DEFAULT_MAX_WAIT_TIME_PENDING_MINUTES.toString());
+        setEditableDoctorThreshold(DEFAULT_MAX_WAIT_TIME_DOCTOR_MINUTES.toString());
+        toast({ title: "Configuración de Alertas por Defecto", description: "No se encontró config. de umbrales de alerta en Firestore. Usando valores por defecto. Puede guardarlos para crearlos.", duration: 5000});
+      }
+    } catch (error) {
+      console.error("Error fetching alert thresholds:", error);
+      toast({ title: "Error en Umbrales", description: "No se pudo cargar la configuración de umbrales de alerta.", variant: "destructive" });
+    } finally {
+      setIsLoadingAlertConfig(false);
+    }
+  }, [toast]);
+
+
   useEffect(() => {
     if (currentUser?.email === ADMIN_EMAIL) {
       fetchAppConfiguration();
+      fetchAlertThresholds();
     }
-  }, [currentUser, fetchAppConfiguration]);
+  }, [currentUser, fetchAppConfiguration, fetchAlertThresholds]);
 
   // Fetch Turn Statistics
   useEffect(() => {
@@ -212,7 +259,7 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (currentUser?.email !== ADMIN_EMAIL) {
+    if (currentUser?.email !== ADMIN_EMAIL || isLoadingAlertConfig) {
       setPatientsWithLongWait([]);
       return;
     }
@@ -227,11 +274,11 @@ export default function AdminPage() {
         let waitType: 'ventanilla' | 'medico' = 'ventanilla';
 
         if (turn.status === "pending" && turn.requestedAt) {
-          thresholdMs = MAX_WAIT_TIME_PENDING_MINUTES * 60 * 1000;
+          thresholdMs = alertThresholds.maxWaitTimePendingMinutes * 60 * 1000;
           referenceTimeMs = turn.requestedAt.toMillis();
           waitType = 'ventanilla';
         } else if (turn.status === "waiting_doctor" && turn.completedAt) {
-          thresholdMs = MAX_WAIT_TIME_DOCTOR_MINUTES * 60 * 1000;
+          thresholdMs = alertThresholds.maxWaitTimeDoctorMinutes * 60 * 1000;
           referenceTimeMs = turn.completedAt.toMillis();
           waitType = 'medico';
         } else {
@@ -252,7 +299,7 @@ export default function AdminPage() {
       toast({ title: "Error de Carga", description: "No se pudieron cargar los turnos para alertas de espera.", variant: "destructive" });
     });
     return () => unsubscribeAlerts();
-  }, [currentUser, toast]);
+  }, [currentUser, toast, alertThresholds, isLoadingAlertConfig]);
 
   const calculateDynamicWaitTime = (turn: Turn, waitType: 'ventanilla' | 'medico'): string => {
     const now = currentTime.getTime();
@@ -321,6 +368,10 @@ export default function AdminPage() {
           )
         );
       } else {
+        // If the service doc didn't exist, it was created by setDoc. 
+        // We should fetch to get the full config object if needed elsewhere, or ensure defaults.
+        // For simplicity now, we assume if it wasn't found, it only has `modules`. 
+        // Better: call fetchAppConfiguration() to re-sync.
         await fetchAppConfiguration();
       }
 
@@ -412,16 +463,52 @@ export default function AdminPage() {
     };
     const consultorioRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     batch.set(consultorioRef, consultorioConfig);
+    
+    // Also save default alert thresholds
+    const defaultAlerts: AlertThresholds = {
+        maxWaitTimePendingMinutes: DEFAULT_MAX_WAIT_TIME_PENDING_MINUTES,
+        maxWaitTimeDoctorMinutes: DEFAULT_MAX_WAIT_TIME_DOCTOR_MINUTES,
+    };
+    const alertThresholdsRef = doc(db, APP_CONFIG_COLLECTION, ALERT_THRESHOLDS_DOC_ID);
+    batch.set(alertThresholdsRef, defaultAlerts);
+
 
     try {
       await batch.commit();
       toast({ title: "Configuración Guardada", description: "La configuración por defecto ha sido guardada en Firestore." });
       await fetchAppConfiguration();
+      await fetchAlertThresholds();
     } catch (error) {
       console.error("Error saving initial config to Firestore:", error);
       toast({ title: "Error al Guardar Config.", description: "No se pudo guardar la configuración inicial en Firestore.", variant: "destructive" });
     } finally {
       setIsLoadingConfig(false);
+    }
+  };
+
+  const handleSaveAlertThresholds = async () => {
+    const pendingMinutes = parseInt(editablePendingThreshold, 10);
+    const doctorMinutes = parseInt(editableDoctorThreshold, 10);
+
+    if (isNaN(pendingMinutes) || pendingMinutes < 0 || isNaN(doctorMinutes) || doctorMinutes < 0) {
+        toast({ title: "Valores Inválidos", description: "Los tiempos de espera deben ser números positivos.", variant: "destructive" });
+        return;
+    }
+    setIsSavingAlertConfig(true);
+    const newThresholds: AlertThresholds = {
+        maxWaitTimePendingMinutes: pendingMinutes,
+        maxWaitTimeDoctorMinutes: doctorMinutes,
+    };
+    try {
+        const thresholdsDocRef = doc(db, APP_CONFIG_COLLECTION, ALERT_THRESHOLDS_DOC_ID);
+        await setDoc(thresholdsDocRef, newThresholds, { merge: true }); // merge:true to create if not exists
+        setAlertThresholds(newThresholds);
+        toast({ title: "Umbrales Guardados", description: "Los umbrales de alerta de espera han sido actualizados en Firestore." });
+    } catch (error) {
+        console.error("Error saving alert thresholds:", error);
+        toast({ title: "Error al Guardar", description: "No se pudieron guardar los umbrales de alerta.", variant: "destructive" });
+    } finally {
+        setIsSavingAlertConfig(false);
     }
   };
 
@@ -431,7 +518,7 @@ export default function AdminPage() {
   }, [serviceConfigs, selectedServiceForModuleMgmt]);
 
 
-  if (authLoading || (currentUser?.email === ADMIN_EMAIL && isLoadingConfig)) {
+  if (authLoading || (currentUser?.email === ADMIN_EMAIL && (isLoadingConfig || isLoadingAlertConfig))) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -515,18 +602,19 @@ export default function AdminPage() {
                 Inicializar/Restablecer Configuración en DB
               </Button>
               <p className="text-xs text-muted-foreground mt-1">
-                (Use esto para poblar Firestore con los valores por defecto de los archivos o para restaurarlos).
+                (Use esto para poblar Firestore con los valores por defecto o para restaurarlos).
               </p>
             </div>
           </CardHeader>
           <CardContent className="p-0 sm:p-2 md:p-4">
             <Tabs defaultValue="crear-usuario" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 h-auto md:h-12">
+              <TabsList className="grid w-full grid-cols-2 md:grid-cols-6 h-auto md:h-12">
                 <TabsTrigger value="crear-usuario" className="py-2 text-xs sm:text-sm"><UserPlus className="mr-1 h-4 w-4" />Crear Usuarios</TabsTrigger>
                 <TabsTrigger value="espera-prolongada" className="py-2 text-xs sm:text-sm"><AlarmClock className="mr-1 h-4 w-4" />Espera Prolongada</TabsTrigger>
                 <TabsTrigger value="estadisticas" className="py-2 text-xs sm:text-sm"><ClipboardList className="mr-1 h-4 w-4" />Estadísticas</TabsTrigger>
                 <TabsTrigger value="gestionar-ventanillas" className="py-2 text-xs sm:text-sm"><Settings2 className="mr-1 h-4 w-4" />Ventanillas</TabsTrigger>
                 <TabsTrigger value="gestionar-consultorios" className="py-2 text-xs sm:text-sm"><Hospital className="mr-1 h-4 w-4" />Consultorios</TabsTrigger>
+                <TabsTrigger value="config-alertas" className="py-2 text-xs sm:text-sm"><Cog className="mr-1 h-4 w-4" />Alertas</TabsTrigger>
               </TabsList>
 
               <TabsContent value="crear-usuario" className="p-4 md:p-6">
@@ -579,7 +667,7 @@ export default function AdminPage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-destructive"><AlarmClock className="h-6 w-6" />Pacientes con Espera Prolongada</CardTitle>
                     <CardDescription className="text-destructive/80">
-                      Pacientes esperando más de {MAX_WAIT_TIME_PENDING_MINUTES} min (ventanilla) o {MAX_WAIT_TIME_DOCTOR_MINUTES} min (médico).
+                      Pacientes esperando más de {alertThresholds.maxWaitTimePendingMinutes} min (ventanilla) o {alertThresholds.maxWaitTimeDoctorMinutes} min (médico).
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -803,6 +891,50 @@ export default function AdminPage() {
                   </CardContent>
                 </Card>
               </TabsContent>
+
+              <TabsContent value="config-alertas" className="p-4 md:p-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Cog className="h-6 w-6" />Configuración de Alertas de Espera</CardTitle>
+                    <CardDescription>
+                      Ajuste los tiempos máximos de espera antes de que se genere una alerta. Los cambios se guardan en Firestore.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormItem>
+                        <Label htmlFor="pending-threshold">Tiempo Máx. Espera Ventanilla (minutos)</Label>
+                        <Input 
+                            id="pending-threshold"
+                            type="number" 
+                            value={editablePendingThreshold}
+                            onChange={(e) => setEditablePendingThreshold(e.target.value)}
+                            className="text-base h-11"
+                            min="1"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">Tiempo en minutos antes de alertar para turnos en estado 'pendiente'.</p>
+                    </FormItem>
+                     <FormItem>
+                        <Label htmlFor="doctor-threshold">Tiempo Máx. Espera Médico (minutos)</Label>
+                        <Input 
+                            id="doctor-threshold"
+                            type="number" 
+                            value={editableDoctorThreshold}
+                            onChange={(e) => setEditableDoctorThreshold(e.target.value)}
+                            className="text-base h-11"
+                            min="1"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">Tiempo en minutos antes de alertar para turnos en estado 'esperando médico'.</p>
+                    </FormItem>
+                  </CardContent>
+                  <CardFooter>
+                    <Button onClick={handleSaveAlertThresholds} disabled={isLoadingAlertConfig || isSavingAlertConfig} className="w-full text-lg py-3">
+                        {isSavingAlertConfig ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Cog className="mr-2 h-5 w-5" />}
+                        {isSavingAlertConfig ? "Guardando..." : "Guardar Umbrales"}
+                    </Button>
+                  </CardFooter>
+                </Card>
+              </TabsContent>
+
             </Tabs>
           </CardContent>
         </Card>
