@@ -1,7 +1,8 @@
 
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback }
+from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -19,10 +20,10 @@ import { useToast } from "@/hooks/use-toast";
 import { auth, db } from "@/lib/firebase";
 import { signOut, createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { collection, query, where, onSnapshot, Timestamp, or, doc, getDoc, setDoc, getDocs, updateDoc, arrayUnion, arrayRemove, writeBatch } from "firebase/firestore";
-import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock, Settings2, Hospital, Trash2, PlusCircle, Loader2 } from "lucide-react";
+import { UserPlus, ShieldCheck, AlertTriangle, LogIn, UserCircle2, Hourglass, LogOut, AlarmClock, Settings2, Hospital, Trash2, PlusCircle, Loader2, ClipboardList, PlayCircle, CheckCircle2, UserX } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import type { Turn } from "@/types/turn";
-import { formatDistanceToNowStrict, intervalToDuration } from 'date-fns';
+import type { Turn, TurnStatus } from "@/types/turn";
+import { formatDistanceToNowStrict, intervalToDuration, startOfDay, endOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC } from "@/lib/services";
@@ -46,6 +47,14 @@ interface PatientWithLongWait extends Turn {
   waitType: 'ventanilla' | 'medico';
 }
 
+interface TurnStats {
+  totalToday: number;
+  pendingNow: number;
+  inProgressNow: number;
+  completedToday: number;
+  missedToday: number;
+}
+
 const SERVICE_CONFIG_COLLECTION = "service_configurations";
 const APP_CONFIG_COLLECTION = "app_configurations";
 const CONSULTORIOS_DOC_ID = "main_consultorios_config";
@@ -67,12 +76,21 @@ export default function AdminPage() {
   const [newModuleName, setNewModuleName] = useState("");
   const [newConsultorioName, setNewConsultorioName] = useState("");
 
+  const [turnStats, setTurnStats] = useState<TurnStats>({
+    totalToday: 0,
+    pendingNow: 0,
+    inProgressNow: 0,
+    completedToday: 0,
+    missedToday: 0,
+  });
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+
 
   // Map Firestore data to frontend usable ServiceDefinitionFront
   const editableServices: ServiceDefinitionFront[] = useMemo(() => {
     return serviceConfigs.map(sc => ({
       id: sc.id,
-      value: sc.id, 
+      value: sc.id,
       label: sc.label,
       icon: serviceIconMap[sc.iconName] || DefaultServiceIcon,
       prefix: sc.prefix,
@@ -87,9 +105,8 @@ export default function AdminPage() {
       // Fetch Service Configurations
       const serviceSnapshot = await getDocs(collection(db, SERVICE_CONFIG_COLLECTION));
       if (serviceSnapshot.empty) {
-        toast({ title: "Configuración de Servicios Vacía", description: "No se encontró configuración de servicios en Firestore. Puede inicializarla con valores por defecto.", duration: 7000});
-        // Do not set from static here, let user initialize if they want
-        setServiceConfigs([]); 
+        toast({ title: "Configuración de Servicios Vacía", description: "No se encontró configuración de servicios en Firestore. Puede inicializarla con valores por defecto.", duration: 7000 });
+        setServiceConfigs([]);
       } else {
         const servicesData = serviceSnapshot.docs.map(doc => doc.data() as ServiceConfig);
         setServiceConfigs(servicesData);
@@ -102,13 +119,12 @@ export default function AdminPage() {
         const consultorioData = consultorioDocSnap.data() as ConsultorioConfig;
         setConsultorioNames(consultorioData.names || []);
       } else {
-         toast({ title: "Configuración de Consultorios Vacía", description: "No se encontró configuración de consultorios en Firestore. Puede inicializarla con valores por defecto.", duration: 7000});
+        toast({ title: "Configuración de Consultorios Vacía", description: "No se encontró configuración de consultorios en Firestore. Puede inicializarla con valores por defecto.", duration: 7000 });
         setConsultorioNames([]);
       }
     } catch (error) {
       console.error("Error fetching app configuration:", error);
       toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de la base de datos.", variant: "destructive" });
-      // Fallback to empty arrays if DB fetch fails after initial load attempt
       setServiceConfigs([]);
       setConsultorioNames([]);
     } finally {
@@ -121,6 +137,68 @@ export default function AdminPage() {
       fetchAppConfiguration();
     }
   }, [currentUser, fetchAppConfiguration]);
+
+  // Fetch Turn Statistics
+  useEffect(() => {
+    if (currentUser?.email !== ADMIN_EMAIL) {
+      setTurnStats({ totalToday: 0, pendingNow: 0, inProgressNow: 0, completedToday: 0, missedToday: 0 });
+      setIsLoadingStats(false);
+      return;
+    }
+    setIsLoadingStats(true);
+
+    const todayStart = Timestamp.fromDate(startOfDay(new Date()));
+    const todayEnd = Timestamp.fromDate(endOfDay(new Date()));
+
+    const q = query(collection(db, "turns")); // Query all turns first
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      let totalTodayCount = 0;
+      let pendingNowCount = 0;
+      let inProgressNowCount = 0;
+      let completedTodayCount = 0;
+      let missedTodayCount = 0;
+
+      querySnapshot.forEach((docSnap) => {
+        const turn = docSnap.data() as Turn;
+        const requestedAtDate = turn.requestedAt.toDate();
+
+        // For "Today" stats
+        if (requestedAtDate >= todayStart.toDate() && requestedAtDate <= todayEnd.toDate()) {
+          totalTodayCount++;
+          if (turn.status === 'completed' || turn.status === 'completed_by_doctor') {
+            completedTodayCount++;
+          }
+          if (turn.status === 'missed' || turn.status === 'missed_by_doctor') {
+            missedTodayCount++;
+          }
+        }
+
+        // For "Now" stats
+        if (turn.status === 'pending') {
+          pendingNowCount++;
+        }
+        if (turn.status === 'called' || turn.status === 'called_by_doctor') {
+          inProgressNowCount++;
+        }
+      });
+
+      setTurnStats({
+        totalToday: totalTodayCount,
+        pendingNow: pendingNowCount,
+        inProgressNow: inProgressNowCount,
+        completedToday: completedTodayCount,
+        missedToday: missedTodayCount,
+      });
+      setIsLoadingStats(false);
+    }, (error) => {
+      console.error("Error fetching turn statistics:", error);
+      toast({ title: "Error de Estadísticas", description: "No se pudieron cargar las estadísticas de turnos.", variant: "destructive" });
+      setIsLoadingStats(false);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, toast]);
 
 
   const createUserForm = useForm<CreateUserFormValues>({
@@ -138,8 +216,8 @@ export default function AdminPage() {
       setPatientsWithLongWait([]);
       return;
     }
-    const q = query(collection(db, "turns"), or(where("status", "==", "pending"), where("status", "==", "waiting_doctor")));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const qTurnsAlert = query(collection(db, "turns"), or(where("status", "==", "pending"), where("status", "==", "waiting_doctor")));
+    const unsubscribeAlerts = onSnapshot(qTurnsAlert, (querySnapshot) => {
       const now = Date.now();
       const longWaitList: PatientWithLongWait[] = [];
       querySnapshot.forEach((docSnap) => {
@@ -173,7 +251,7 @@ export default function AdminPage() {
       console.error("Error fetching turns for long wait alert:", error);
       toast({ title: "Error de Carga", description: "No se pudieron cargar los turnos para alertas de espera.", variant: "destructive" });
     });
-    return () => unsubscribe();
+    return () => unsubscribeAlerts();
   }, [currentUser, toast]);
 
   const calculateDynamicWaitTime = (turn: Turn, waitType: 'ventanilla' | 'medico'): string => {
@@ -225,32 +303,24 @@ export default function AdminPage() {
   // Module Management Functions
   const handleAddModule = async () => {
     if (!newModuleName.trim() || !selectedServiceForModuleMgmt) return;
-    const serviceId = selectedServiceForModuleMgmt; 
+    const serviceId = selectedServiceForModuleMgmt;
     const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
-    
+
     try {
-      // Use setDoc with merge: true to create the document if it doesn't exist,
-      // or update it if it does.
-      await setDoc(serviceRef, { 
-        modules: arrayUnion(newModuleName.trim()) 
+      await setDoc(serviceRef, {
+        modules: arrayUnion(newModuleName.trim())
       }, { merge: true });
 
-      // To ensure the document has all necessary fields if it was just created,
-      // especially 'id', 'label', 'prefix', 'iconName' if they are missing.
-      // This is a bit more involved if the doc was truly new.
-      // A simpler approach is to ensure "Inicializar/Restablecer" creates full docs.
-      // For now, just update the local state optimistically.
       const currentService = serviceConfigs.find(s => s.id === serviceId);
       if (currentService) {
         setServiceConfigs(prevConfigs =>
-            prevConfigs.map(sc =>
+          prevConfigs.map(sc =>
             sc.id === serviceId
-                ? { ...sc, modules: [...(sc.modules || []), newModuleName.trim()] } 
-                : sc
-            )
+              ? { ...sc, modules: [...(sc.modules || []), newModuleName.trim()].sort() }
+              : sc
+          )
         );
       } else {
-        // If the service wasn't even in local state (shouldn't happen if initialized), refetch
         await fetchAppConfiguration();
       }
 
@@ -263,17 +333,16 @@ export default function AdminPage() {
   };
 
   const handleRemoveModule = async (serviceValue: string, moduleNameToRemove: string) => {
-     const serviceId = serviceValue;
-     const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
+    const serviceId = serviceValue;
+    const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
     try {
-      // updateDoc is fine here as the document should exist if we're removing a module from it.
       await updateDoc(serviceRef, {
         modules: arrayRemove(moduleNameToRemove)
       });
       setServiceConfigs(prevConfigs =>
         prevConfigs.map(sc =>
           sc.id === serviceId
-            ? { ...sc, modules: sc.modules.filter(m => m !== moduleNameToRemove) }
+            ? { ...sc, modules: sc.modules.filter(m => m !== moduleNameToRemove).sort() }
             : sc
         )
       );
@@ -289,58 +358,57 @@ export default function AdminPage() {
     if (!newConsultorioName.trim()) return;
     const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     try {
-      await setDoc(consultorioDocRef, { 
-        id: CONSULTORIOS_DOC_ID, // Ensure ID is set if document is new
-        names: arrayUnion(newConsultorioName.trim()) 
+      await setDoc(consultorioDocRef, {
+        id: CONSULTORIOS_DOC_ID,
+        names: arrayUnion(newConsultorioName.trim())
       }, { merge: true });
-      
+
       setConsultorioNames(prev => {
         const newNames = [...prev, newConsultorioName.trim()];
-        return Array.from(new Set(newNames)); // Ensure uniqueness
+        return Array.from(new Set(newNames)).sort();
       });
       setNewConsultorioName("");
       toast({ title: "Consultorio Añadido", description: `Consultorio "${newConsultorioName.trim()}" añadido y guardado en Firestore.` });
     } catch (error) {
-       console.error("Error adding consultorio to Firestore:", error);
-       toast({ title: "Error al Guardar", description: "No se pudo añadir el consultorio a Firestore.", variant: "destructive" });
+      console.error("Error adding consultorio to Firestore:", error);
+      toast({ title: "Error al Guardar", description: "No se pudo añadir el consultorio a Firestore.", variant: "destructive" });
     }
   };
 
   const handleRemoveConsultorio = async (consultorioNameToRemove: string) => {
     const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     try {
-      await updateDoc(consultorioDocRef, { // updateDoc is fine as doc should exist
-          names: arrayRemove(consultorioNameToRemove)
+      await updateDoc(consultorioDocRef, {
+        names: arrayRemove(consultorioNameToRemove)
       });
-      setConsultorioNames(prev => prev.filter(c => c !== consultorioNameToRemove));
+      setConsultorioNames(prev => prev.filter(c => c !== consultorioNameToRemove).sort());
       toast({ title: "Consultorio Eliminado", description: `Consultorio "${consultorioNameToRemove}" eliminado y guardado en Firestore.` });
     } catch (error) {
-       console.error("Error removing consultorio from Firestore:", error);
-       toast({ title: "Error al Guardar", description: "No se pudo eliminar el consultorio de Firestore.", variant: "destructive" });
+      console.error("Error removing consultorio from Firestore:", error);
+      toast({ title: "Error al Guardar", description: "No se pudo eliminar el consultorio de Firestore.", variant: "destructive" });
     }
   };
-  
+
   const handleInitialSaveConfig = async () => {
     setIsLoadingConfig(true);
     const batch = writeBatch(db);
 
     const servicesFromStatic: ServiceConfig[] = DEFAULT_SERVICES_STATIC.map(s => ({
-      id: s.value, // This is the service ID like "facturacion"
+      id: s.value,
       label: s.label,
       iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings",
       prefix: s.prefix,
-      modules: [...s.modules], // Ensure this is a copy
+      modules: [...s.modules].sort(),
     }));
 
     servicesFromStatic.forEach(serviceConfig => {
       const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceConfig.id);
-      // Use setDoc to ensure the document is created with all fields
-      batch.set(serviceRef, serviceConfig); 
+      batch.set(serviceRef, serviceConfig);
     });
-    
+
     const consultorioConfig: ConsultorioConfig = {
       id: CONSULTORIOS_DOC_ID,
-      names: [...DEFAULT_CONSULTORIOS_STATIC] // Ensure this is a copy
+      names: [...DEFAULT_CONSULTORIOS_STATIC].sort()
     };
     const consultorioRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     batch.set(consultorioRef, consultorioConfig);
@@ -348,7 +416,7 @@ export default function AdminPage() {
     try {
       await batch.commit();
       toast({ title: "Configuración Guardada", description: "La configuración por defecto ha sido guardada en Firestore." });
-      await fetchAppConfiguration(); // Re-fetch to ensure UI is in sync with DB
+      await fetchAppConfiguration();
     } catch (error) {
       console.error("Error saving initial config to Firestore:", error);
       toast({ title: "Error al Guardar Config.", description: "No se pudo guardar la configuración inicial en Firestore.", variant: "destructive" });
@@ -359,7 +427,7 @@ export default function AdminPage() {
 
 
   const currentModulesForSelectedService = useMemo(() => {
-    return serviceConfigs.find(s => s.id === selectedServiceForModuleMgmt)?.modules || [];
+    return serviceConfigs.find(s => s.id === selectedServiceForModuleMgmt)?.modules.sort() || [];
   }, [serviceConfigs, selectedServiceForModuleMgmt]);
 
 
@@ -424,258 +492,319 @@ export default function AdminPage() {
     <main className="flex min-h-screen flex-col items-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/5 via-background to-background">
       <div className="w-full max-w-5xl space-y-8">
         <Card className="w-full shadow-xl">
-            <CardHeader className="text-center bg-primary/10 p-6 rounded-t-lg">
-                <div className="flex justify-center mb-4">
-                    <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} data-ai-hint="hospital logo" />
-                </div>
-                <div className="flex items-center justify-between w-full mb-4">
-                    <div className="flex items-center gap-2">
-                        <UserCircle2 className="h-7 w-7 text-primary" />
-                        <p className="text-xs text-muted-foreground">Admin: {currentUser.email}</p>
-                    </div>
-                    <Button onClick={handleLogout} variant="outline" size="sm" className="text-xs">
-                        <LogOut className="mr-1 h-4 w-4" /> Salir
-                    </Button>
-                </div>
-                <CardTitle className="text-3xl font-bold text-primary">Panel de Administración</CardTitle>
-                <CardDescription className="text-muted-foreground pt-1">
-                    Gestione usuarios, monitoree tiempos de espera y configure el sistema.
-                </CardDescription>
-                 <div className="mt-4">
-                    <Button onClick={handleInitialSaveConfig} variant="outline" size="sm" disabled={isLoadingConfig}>
-                        {isLoadingConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Inicializar/Restablecer Configuración en DB
-                    </Button>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        (Use esto para poblar Firestore con los valores por defecto de los archivos o para restaurarlos).
-                    </p>
-                </div>
-            </CardHeader>
-             <CardContent className="p-0 sm:p-2 md:p-4">
-                <Tabs defaultValue="crear-usuario" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto md:h-12">
-                    <TabsTrigger value="crear-usuario" className="py-2 text-xs sm:text-sm"><UserPlus className="mr-1 h-4 w-4"/>Crear Usuarios</TabsTrigger>
-                    <TabsTrigger value="espera-prolongada" className="py-2 text-xs sm:text-sm"><AlarmClock className="mr-1 h-4 w-4"/>Espera Prolongada</TabsTrigger>
-                    <TabsTrigger value="gestionar-ventanillas" className="py-2 text-xs sm:text-sm"><Settings2 className="mr-1 h-4 w-4"/>Ventanillas</TabsTrigger>
-                    <TabsTrigger value="gestionar-consultorios" className="py-2 text-xs sm:text-sm"><Hospital className="mr-1 h-4 w-4"/>Consultorios</TabsTrigger>
-                  </TabsList>
+          <CardHeader className="text-center bg-primary/10 p-6 rounded-t-lg">
+            <div className="flex justify-center mb-4">
+              <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} data-ai-hint="hospital logo" />
+            </div>
+            <div className="flex items-center justify-between w-full mb-4">
+              <div className="flex items-center gap-2">
+                <UserCircle2 className="h-7 w-7 text-primary" />
+                <p className="text-xs text-muted-foreground">Admin: {currentUser.email}</p>
+              </div>
+              <Button onClick={handleLogout} variant="outline" size="sm" className="text-xs">
+                <LogOut className="mr-1 h-4 w-4" /> Salir
+              </Button>
+            </div>
+            <CardTitle className="text-3xl font-bold text-primary">Panel de Administración</CardTitle>
+            <CardDescription className="text-muted-foreground pt-1">
+              Gestione usuarios, monitoree tiempos de espera y configure el sistema.
+            </CardDescription>
+            <div className="mt-4">
+              <Button onClick={handleInitialSaveConfig} variant="outline" size="sm" disabled={isLoadingConfig}>
+                {isLoadingConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Inicializar/Restablecer Configuración en DB
+              </Button>
+              <p className="text-xs text-muted-foreground mt-1">
+                (Use esto para poblar Firestore con los valores por defecto de los archivos o para restaurarlos).
+              </p>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0 sm:p-2 md:p-4">
+            <Tabs defaultValue="crear-usuario" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 h-auto md:h-12">
+                <TabsTrigger value="crear-usuario" className="py-2 text-xs sm:text-sm"><UserPlus className="mr-1 h-4 w-4" />Crear Usuarios</TabsTrigger>
+                <TabsTrigger value="espera-prolongada" className="py-2 text-xs sm:text-sm"><AlarmClock className="mr-1 h-4 w-4" />Espera Prolongada</TabsTrigger>
+                <TabsTrigger value="estadisticas" className="py-2 text-xs sm:text-sm"><ClipboardList className="mr-1 h-4 w-4" />Estadísticas</TabsTrigger>
+                <TabsTrigger value="gestionar-ventanillas" className="py-2 text-xs sm:text-sm"><Settings2 className="mr-1 h-4 w-4" />Ventanillas</TabsTrigger>
+                <TabsTrigger value="gestionar-consultorios" className="py-2 text-xs sm:text-sm"><Hospital className="mr-1 h-4 w-4" />Consultorios</TabsTrigger>
+              </TabsList>
 
-                  <TabsContent value="crear-usuario" className="p-4 md:p-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2"><UserPlus className="h-6 w-6" />Crear Usuario Profesional</CardTitle>
-                        <CardDescription>Ingrese los datos para el nuevo profesional.</CardDescription>
-                      </CardHeader>
-                      <Form {...createUserForm}>
-                        <form onSubmit={createUserForm.handleSubmit(handleCreateUser)}>
-                          <CardContent className="space-y-6">
-                            <FormField control={createUserForm.control} name="displayName" render={({ field }) => (
-                                <FormItem>
-                                  <Label htmlFor="prof-displayName">Nombre del Profesional</Label>
-                                  <FormControl><Input id="prof-displayName" placeholder="Ej: Dr. Juan Pérez" {...field} className="text-base h-11" /></FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField control={createUserForm.control} name="email" render={({ field }) => (
-                                <FormItem>
-                                  <Label htmlFor="prof-email">Correo Electrónico</Label>
-                                  <FormControl><Input id="prof-email" type="email" placeholder="ej: medico.juan@hospital.com" {...field} className="text-base h-11" /></FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                            <FormField control={createUserForm.control} name="password" render={({ field }) => (
-                                <FormItem>
-                                  <Label htmlFor="prof-password">Contraseña</Label>
-                                  <FormControl><Input id="prof-password" type="password" placeholder="••••••••" {...field} className="text-base h-11" /></FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
+              <TabsContent value="crear-usuario" className="p-4 md:p-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><UserPlus className="h-6 w-6" />Crear Usuario Profesional</CardTitle>
+                    <CardDescription>Ingrese los datos para el nuevo profesional.</CardDescription>
+                  </CardHeader>
+                  <Form {...createUserForm}>
+                    <form onSubmit={createUserForm.handleSubmit(handleCreateUser)}>
+                      <CardContent className="space-y-6">
+                        <FormField control={createUserForm.control} name="displayName" render={({ field }) => (
+                          <FormItem>
+                            <Label htmlFor="prof-displayName">Nombre del Profesional</Label>
+                            <FormControl><Input id="prof-displayName" placeholder="Ej: Dr. Juan Pérez" {...field} className="text-base h-11" /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                        />
+                        <FormField control={createUserForm.control} name="email" render={({ field }) => (
+                          <FormItem>
+                            <Label htmlFor="prof-email">Correo Electrónico</Label>
+                            <FormControl><Input id="prof-email" type="email" placeholder="ej: medico.juan@hospital.com" {...field} className="text-base h-11" /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                        />
+                        <FormField control={createUserForm.control} name="password" render={({ field }) => (
+                          <FormItem>
+                            <Label htmlFor="prof-password">Contraseña</Label>
+                            <FormControl><Input id="prof-password" type="password" placeholder="••••••••" {...field} className="text-base h-11" /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                        />
+                      </CardContent>
+                      <CardFooter>
+                        <Button type="submit" className="w-full text-lg py-3" disabled={isCreatingUser}>
+                          {isCreatingUser ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <UserPlus className="mr-2 h-5 w-5" />}
+                          {isCreatingUser ? "Creando..." : "Crear Profesional"}
+                        </Button>
+                      </CardFooter>
+                    </form>
+                  </Form>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="espera-prolongada" className="p-4 md:p-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-destructive"><AlarmClock className="h-6 w-6" />Pacientes con Espera Prolongada</CardTitle>
+                    <CardDescription className="text-destructive/80">
+                      Pacientes esperando más de {MAX_WAIT_TIME_PENDING_MINUTES} min (ventanilla) o {MAX_WAIT_TIME_DOCTOR_MINUTES} min (médico).
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {patientsWithLongWait.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-4">No hay pacientes con espera prolongada.</p>
+                    ) : (
+                      <ul className="space-y-4 max-h-[500px] overflow-y-auto">
+                        {patientsWithLongWait.map((turn) => (
+                          <li key={turn.id} className="p-4 border rounded-lg shadow-sm bg-card hover:bg-secondary/20">
+                            <div className="flex flex-col sm:flex-row justify-between items-start">
+                              <div>
+                                <p className="text-lg font-semibold text-primary">{turn.turnNumber}</p>
+                                <p className="text-sm text-foreground">{turn.patientName || `ID: ${turn.patientId}`}</p>
+                                <p className="text-xs text-muted-foreground">Servicio: {turn.service}</p>
+                                <p className="text-xs text-muted-foreground">Esperando para: <span className="font-medium">{turn.waitType === 'ventanilla' ? 'Ventanilla' : 'Médico'}</span></p>
+                              </div>
+                              <div className="text-right mt-2 sm:mt-0">
+                                <p className="text-lg font-bold text-destructive">{calculateDynamicWaitTime(turn, turn.waitType)}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {turn.waitType === 'ventanilla' && turn.requestedAt ? `Solicitado: ${formatDistanceToNowStrict(turn.requestedAt.toDate(), { addSuffix: true, locale: es })}`
+                                    : (turn.completedAt ? `Facturación Completada: ${formatDistanceToNowStrict(turn.completedAt.toDate(), { addSuffix: true, locale: es })}` : '')}
+                                </p>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="estadisticas" className="p-4 md:p-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><ClipboardList className="h-6 w-6" />Estadísticas de Turnos</CardTitle>
+                    <CardDescription>Resumen del flujo de turnos.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {isLoadingStats ? (
+                      <div className="flex justify-center items-center py-10">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        <p className="ml-2 text-muted-foreground">Cargando estadísticas...</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Card className="p-4 bg-secondary/30">
+                          <CardHeader className="p-2 pb-1">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center"><ClipboardList className="h-4 w-4 mr-2" />Total Turnos (Hoy)</CardTitle>
+                          </CardHeader>
+                          <CardContent className="p-2">
+                            <p className="text-2xl font-bold text-primary">{turnStats.totalToday}</p>
                           </CardContent>
-                          <CardFooter>
-                            <Button type="submit" className="w-full text-lg py-3" disabled={isCreatingUser}>
-                              {isCreatingUser ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <UserPlus className="mr-2 h-5 w-5" />}
-                              {isCreatingUser ? "Creando..." : "Crear Profesional"}
-                            </Button>
-                          </CardFooter>
-                        </form>
-                      </Form>
-                    </Card>
-                  </TabsContent>
+                        </Card>
+                        <Card className="p-4 bg-secondary/30">
+                          <CardHeader className="p-2 pb-1">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center"><Hourglass className="h-4 w-4 mr-2" />Pendientes (Ahora)</CardTitle>
+                          </CardHeader>
+                          <CardContent className="p-2">
+                            <p className="text-2xl font-bold text-orange-500">{turnStats.pendingNow}</p>
+                          </CardContent>
+                        </Card>
+                        <Card className="p-4 bg-secondary/30">
+                          <CardHeader className="p-2 pb-1">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center"><PlayCircle className="h-4 w-4 mr-2" />En Atención (Ahora)</CardTitle>
+                          </CardHeader>
+                          <CardContent className="p-2">
+                            <p className="text-2xl font-bold text-blue-500">{turnStats.inProgressNow}</p>
+                          </CardContent>
+                        </Card>
+                        <Card className="p-4 bg-secondary/30">
+                          <CardHeader className="p-2 pb-1">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center"><CheckCircle2 className="h-4 w-4 mr-2" />Completados (Hoy)</CardTitle>
+                          </CardHeader>
+                          <CardContent className="p-2">
+                            <p className="text-2xl font-bold text-green-600">{turnStats.completedToday}</p>
+                          </CardContent>
+                        </Card>
+                        <Card className="p-4 bg-secondary/30 md:col-span-2">
+                          <CardHeader className="p-2 pb-1">
+                            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center"><UserX className="h-4 w-4 mr-2" />No Presentados (Hoy)</CardTitle>
+                          </CardHeader>
+                          <CardContent className="p-2">
+                            <p className="text-2xl font-bold text-red-500">{turnStats.missedToday}</p>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                  <TabsContent value="espera-prolongada" className="p-4 md:p-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-destructive"><AlarmClock className="h-6 w-6" />Pacientes con Espera Prolongada</CardTitle>
-                        <CardDescription className="text-destructive/80">
-                          Pacientes esperando más de {MAX_WAIT_TIME_PENDING_MINUTES} min (ventanilla) o {MAX_WAIT_TIME_DOCTOR_MINUTES} min (médico).
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        {patientsWithLongWait.length === 0 ? (
-                          <p className="text-muted-foreground text-center py-4">No hay pacientes con espera prolongada.</p>
+              <TabsContent value="gestionar-ventanillas" className="p-4 md:p-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Settings2 className="h-6 w-6" />Gestionar Ventanillas por Servicio</CardTitle>
+                    <CardDescription>
+                      Añada o elimine ventanillas para cada servicio. Los cambios se guardan en Firestore.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div>
+                      <Label htmlFor="select-service-module">Seleccionar Servicio</Label>
+                      <Select value={selectedServiceForModuleMgmt} onValueChange={setSelectedServiceForModuleMgmt}>
+                        <SelectTrigger id="select-service-module" className="h-11">
+                          <SelectValue placeholder="Seleccione un servicio" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {editableServices.map(service => (
+                            <SelectItem key={service.value} value={service.value}>{service.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {selectedServiceForModuleMgmt && (
+                      <div>
+                        <h4 className="font-medium mb-2">Ventanillas para {editableServices.find(s => s.value === selectedServiceForModuleMgmt)?.label}:</h4>
+                        {currentModulesForSelectedService.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No hay ventanillas definidas para este servicio.</p>
                         ) : (
-                          <ul className="space-y-4 max-h-[500px] overflow-y-auto">
-                            {patientsWithLongWait.map((turn) => (
-                              <li key={turn.id} className="p-4 border rounded-lg shadow-sm bg-card hover:bg-secondary/20">
-                                <div className="flex flex-col sm:flex-row justify-between items-start">
-                                  <div>
-                                    <p className="text-lg font-semibold text-primary">{turn.turnNumber}</p>
-                                    <p className="text-sm text-foreground">{turn.patientName || `ID: ${turn.patientId}`}</p>
-                                    <p className="text-xs text-muted-foreground">Servicio: {turn.service}</p>
-                                    <p className="text-xs text-muted-foreground">Esperando para: <span className="font-medium">{turn.waitType === 'ventanilla' ? 'Ventanilla' : 'Médico'}</span></p>
-                                  </div>
-                                  <div className="text-right mt-2 sm:mt-0">
-                                    <p className="text-lg font-bold text-destructive">{calculateDynamicWaitTime(turn, turn.waitType)}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {turn.waitType === 'ventanilla' && turn.requestedAt ? `Solicitado: ${formatDistanceToNowStrict(turn.requestedAt.toDate(), { addSuffix: true, locale: es })}` 
-                                                                      : (turn.completedAt ? `Facturación Completada: ${formatDistanceToNowStrict(turn.completedAt.toDate(), { addSuffix: true, locale: es })}` : '')}
-                                    </p>
-                                  </div>
-                                </div>
+                          <ul className="space-y-2 border rounded-md p-3 max-h-60 overflow-y-auto">
+                            {currentModulesForSelectedService.map(moduleName => (
+                              <li key={moduleName} className="flex items-center justify-between p-2 bg-secondary/30 rounded">
+                                <span>{moduleName}</span>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10">
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        ¿Está seguro que desea eliminar la ventanilla "{moduleName}"? Este cambio se guardará en Firestore.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => handleRemoveModule(selectedServiceForModuleMgmt, moduleName)} className="bg-destructive hover:bg-destructive/90">
+                                        Eliminar
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
                               </li>
                             ))}
                           </ul>
                         )}
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-
-                  <TabsContent value="gestionar-ventanillas" className="p-4 md:p-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2"><Settings2 className="h-6 w-6" />Gestionar Ventanillas por Servicio</CardTitle>
-                        <CardDescription>
-                          Añada o elimine ventanillas para cada servicio. Los cambios se guardan en Firestore.
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-6">
-                        <div>
-                          <Label htmlFor="select-service-module">Seleccionar Servicio</Label>
-                          <Select value={selectedServiceForModuleMgmt} onValueChange={setSelectedServiceForModuleMgmt}>
-                            <SelectTrigger id="select-service-module" className="h-11">
-                              <SelectValue placeholder="Seleccione un servicio" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {editableServices.map(service => ( 
-                                <SelectItem key={service.value} value={service.value}>{service.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {selectedServiceForModuleMgmt && (
-                          <div>
-                            <h4 className="font-medium mb-2">Ventanillas para {editableServices.find(s=>s.value === selectedServiceForModuleMgmt)?.label}:</h4>
-                            {currentModulesForSelectedService.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">No hay ventanillas definidas para este servicio.</p>
-                            ) : (
-                                <ul className="space-y-2 border rounded-md p-3 max-h-60 overflow-y-auto">
-                                {currentModulesForSelectedService.map(moduleName => (
-                                    <li key={moduleName} className="flex items-center justify-between p-2 bg-secondary/30 rounded">
-                                    <span>{moduleName}</span>
-                                    <AlertDialog>
-                                        <AlertDialogTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10">
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        </AlertDialogTrigger>
-                                        <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                                <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
-                                                <AlertDialogDescription>
-                                                ¿Está seguro que desea eliminar la ventanilla "{moduleName}"? Este cambio se guardará en Firestore.
-                                                </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                                <AlertDialogAction onClick={() => handleRemoveModule(selectedServiceForModuleMgmt, moduleName)} className="bg-destructive hover:bg-destructive/90">
-                                                Eliminar
-                                                </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                        </AlertDialogContent>
-                                    </AlertDialog>
-                                    </li>
-                                ))}
-                                </ul>
-                            )}
-                            <div className="mt-4 flex gap-2">
-                              <Input
-                                type="text"
-                                placeholder="Nueva ventanilla"
-                                value={newModuleName}
-                                onChange={(e) => setNewModuleName(e.target.value)}
-                                className="h-11"
-                              />
-                              <Button onClick={handleAddModule} disabled={!newModuleName.trim()} className="h-11">
-                                <PlusCircle className="mr-2 h-4 w-4"/> Añadir
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-
-                  <TabsContent value="gestionar-consultorios" className="p-4 md:p-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2"><Hospital className="h-6 w-6" />Gestionar Consultorios Médicos</CardTitle>
-                        <CardDescription>
-                          Añada o elimine consultorios médicos. Los cambios se guardan en Firestore.
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                         {consultorioNames.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No hay consultorios definidos.</p>
-                          ) : (
-                            <ul className="space-y-2 border rounded-md p-3 max-h-72 overflow-y-auto">
-                            {consultorioNames.map(consultorioName => (
-                                <li key={consultorioName} className="flex items-center justify-between p-2 bg-secondary/30 rounded">
-                                <span>{consultorioName}</span>
-                                <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10">
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                            <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
-                                            <AlertDialogDescription>
-                                            ¿Está seguro que desea eliminar el consultorio "{consultorioName}"? Este cambio se guardará en Firestore.
-                                            </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => handleRemoveConsultorio(consultorioName)} className="bg-destructive hover:bg-destructive/90">
-                                            Eliminar
-                                            </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                </AlertDialog>
-                                </li>
-                            ))}
-                            </ul>
-                        )}
-                        <div className="flex gap-2">
+                        <div className="mt-4 flex gap-2">
                           <Input
                             type="text"
-                            placeholder="Nuevo consultorio"
-                            value={newConsultorioName}
-                            onChange={(e) => setNewConsultorioName(e.target.value)}
+                            placeholder="Nueva ventanilla"
+                            value={newModuleName}
+                            onChange={(e) => setNewModuleName(e.target.value)}
                             className="h-11"
                           />
-                          <Button onClick={handleAddConsultorio} disabled={!newConsultorioName.trim()} className="h-11">
-                            <PlusCircle className="mr-2 h-4 w-4"/> Añadir
+                          <Button onClick={handleAddModule} disabled={!newModuleName.trim()} className="h-11">
+                            <PlusCircle className="mr-2 h-4 w-4" /> Añadir
                           </Button>
                         </div>
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                </Tabs>
-            </CardContent>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="gestionar-consultorios" className="p-4 md:p-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Hospital className="h-6 w-6" />Gestionar Consultorios Médicos</CardTitle>
+                    <CardDescription>
+                      Añada o elimine consultorios médicos. Los cambios se guardan en Firestore.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {consultorioNames.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No hay consultorios definidos.</p>
+                    ) : (
+                      <ul className="space-y-2 border rounded-md p-3 max-h-72 overflow-y-auto">
+                        {consultorioNames.map(consultorioName => (
+                          <li key={consultorioName} className="flex items-center justify-between p-2 bg-secondary/30 rounded">
+                            <span>{consultorioName}</span>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10">
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    ¿Está seguro que desea eliminar el consultorio "{consultorioName}"? Este cambio se guardará en Firestore.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => handleRemoveConsultorio(consultorioName)} className="bg-destructive hover:bg-destructive/90">
+                                    Eliminar
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="flex gap-2">
+                      <Input
+                        type="text"
+                        placeholder="Nuevo consultorio"
+                        value={newConsultorioName}
+                        onChange={(e) => setNewConsultorioName(e.target.value)}
+                        className="h-11"
+                      />
+                      <Button onClick={handleAddConsultorio} disabled={!newConsultorioName.trim()} className="h-11">
+                        <PlusCircle className="mr-2 h-4 w-4" /> Añadir
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
         </Card>
         <p className="text-xs text-muted-foreground mt-6 text-center max-w-md">
           **Nota:** Al crear un usuario, ese nuevo usuario profesional será conectado automáticamente en esta sesión del navegador.
@@ -685,5 +814,3 @@ export default function AdminPage() {
     </main>
   );
 }
-
-    
