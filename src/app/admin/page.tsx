@@ -71,9 +71,12 @@ export default function AdminPage() {
   // Map Firestore data to frontend usable ServiceDefinitionFront
   const editableServices: ServiceDefinitionFront[] = useMemo(() => {
     return serviceConfigs.map(sc => ({
-      ...sc,
-      value: sc.id, // 'id' from Firestore is 'value' for Select
+      id: sc.id,
+      value: sc.id, 
+      label: sc.label,
       icon: serviceIconMap[sc.iconName] || DefaultServiceIcon,
+      prefix: sc.prefix,
+      modules: sc.modules,
     }));
   }, [serviceConfigs]);
 
@@ -84,17 +87,9 @@ export default function AdminPage() {
       // Fetch Service Configurations
       const serviceSnapshot = await getDocs(collection(db, SERVICE_CONFIG_COLLECTION));
       if (serviceSnapshot.empty) {
-        // If Firestore is empty, use static defaults and offer to save them
-        toast({ title: "Configuración Inicial", description: "No se encontró configuración de servicios en Firestore. Usando valores por defecto. Guarde para persistir.", duration: 7000});
-        const initialServicesFromStatic = DEFAULT_SERVICES_STATIC.map(s => ({
-          id: s.value,
-          label: s.label,
-          // Find icon name string from map key by component (this is a bit reverse, better to store name)
-          iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings",
-          prefix: s.prefix,
-          modules: [...s.modules],
-        }));
-        setServiceConfigs(initialServicesFromStatic);
+        toast({ title: "Configuración de Servicios Vacía", description: "No se encontró configuración de servicios en Firestore. Puede inicializarla con valores por defecto.", duration: 7000});
+        // Do not set from static here, let user initialize if they want
+        setServiceConfigs([]); 
       } else {
         const servicesData = serviceSnapshot.docs.map(doc => doc.data() as ServiceConfig);
         setServiceConfigs(servicesData);
@@ -104,19 +99,18 @@ export default function AdminPage() {
       const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
       const consultorioDocSnap = await getDoc(consultorioDocRef);
       if (consultorioDocSnap.exists()) {
-        setConsultorioNames((consultorioDocSnap.data() as ConsultorioConfig).names);
+        const consultorioData = consultorioDocSnap.data() as ConsultorioConfig;
+        setConsultorioNames(consultorioData.names || []);
       } else {
-         toast({ title: "Configuración Inicial", description: "No se encontró configuración de consultorios en Firestore. Usando valores por defecto. Guarde para persistir.", duration: 7000});
-        setConsultorioNames([...DEFAULT_CONSULTORIOS_STATIC]);
+         toast({ title: "Configuración de Consultorios Vacía", description: "No se encontró configuración de consultorios en Firestore. Puede inicializarla con valores por defecto.", duration: 7000});
+        setConsultorioNames([]);
       }
     } catch (error) {
       console.error("Error fetching app configuration:", error);
-      toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de servicios/consultorios.", variant: "destructive" });
-      // Fallback to static if DB fetch fails
-      setServiceConfigs(DEFAULT_SERVICES_STATIC.map(s => ({
-        id: s.value, label: s.label, iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings", prefix: s.prefix, modules: [...s.modules]
-      })));
-      setConsultorioNames([...DEFAULT_CONSULTORIOS_STATIC]);
+      toast({ title: "Error de Configuración", description: "No se pudo cargar la configuración de la base de datos.", variant: "destructive" });
+      // Fallback to empty arrays if DB fetch fails after initial load attempt
+      setServiceConfigs([]);
+      setConsultorioNames([]);
     } finally {
       setIsLoadingConfig(false);
     }
@@ -148,8 +142,8 @@ export default function AdminPage() {
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const now = Date.now();
       const longWaitList: PatientWithLongWait[] = [];
-      querySnapshot.forEach((doc) => {
-        const turn = { id: doc.id, ...doc.data() } as Turn;
+      querySnapshot.forEach((docSnap) => {
+        const turn = { id: docSnap.id, ...docSnap.data() } as Turn;
         let thresholdMs: number;
         let referenceTimeMs: number | undefined;
         let waitType: 'ventanilla' | 'medico' = 'ventanilla';
@@ -231,22 +225,37 @@ export default function AdminPage() {
   // Module Management Functions
   const handleAddModule = async () => {
     if (!newModuleName.trim() || !selectedServiceForModuleMgmt) return;
-    const serviceId = selectedServiceForModuleMgmt; // selectedServiceForModuleMgmt is the service ID
-
+    const serviceId = selectedServiceForModuleMgmt; 
     const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
+    
     try {
-      await updateDoc(serviceRef, {
-        modules: arrayUnion(newModuleName.trim())
-      });
-      setServiceConfigs(prevConfigs =>
-        prevConfigs.map(sc =>
-          sc.id === serviceId
-            ? { ...sc, modules: [...sc.modules, newModuleName.trim()] }
-            : sc
-        )
-      );
+      // Use setDoc with merge: true to create the document if it doesn't exist,
+      // or update it if it does.
+      await setDoc(serviceRef, { 
+        modules: arrayUnion(newModuleName.trim()) 
+      }, { merge: true });
+
+      // To ensure the document has all necessary fields if it was just created,
+      // especially 'id', 'label', 'prefix', 'iconName' if they are missing.
+      // This is a bit more involved if the doc was truly new.
+      // A simpler approach is to ensure "Inicializar/Restablecer" creates full docs.
+      // For now, just update the local state optimistically.
+      const currentService = serviceConfigs.find(s => s.id === serviceId);
+      if (currentService) {
+        setServiceConfigs(prevConfigs =>
+            prevConfigs.map(sc =>
+            sc.id === serviceId
+                ? { ...sc, modules: [...(sc.modules || []), newModuleName.trim()] } 
+                : sc
+            )
+        );
+      } else {
+        // If the service wasn't even in local state (shouldn't happen if initialized), refetch
+        await fetchAppConfiguration();
+      }
+
       setNewModuleName("");
-      toast({ title: "Módulo Añadido", description: `Módulo "${newModuleName.trim()}" añadido a ${serviceConfigs.find(s => s.id === serviceId)?.label} y guardado en Firestore.` });
+      toast({ title: "Módulo Añadido", description: `Módulo "${newModuleName.trim()}" añadido a ${serviceConfigs.find(s => s.id === serviceId)?.label || serviceId} y guardado en Firestore.` });
     } catch (error) {
       console.error("Error adding module to Firestore:", error);
       toast({ title: "Error al Guardar", description: "No se pudo añadir el módulo a Firestore.", variant: "destructive" });
@@ -257,6 +266,7 @@ export default function AdminPage() {
      const serviceId = serviceValue;
      const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceId);
     try {
+      // updateDoc is fine here as the document should exist if we're removing a module from it.
       await updateDoc(serviceRef, {
         modules: arrayRemove(moduleNameToRemove)
       });
@@ -279,16 +289,15 @@ export default function AdminPage() {
     if (!newConsultorioName.trim()) return;
     const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     try {
-      // Ensure document exists before trying to update array, or use setDoc with merge
-      const currentConfigSnap = await getDoc(consultorioDocRef);
-      if (currentConfigSnap.exists()) {
-        await updateDoc(consultorioDocRef, {
-          names: arrayUnion(newConsultorioName.trim())
-        });
-      } else {
-        await setDoc(consultorioDocRef, { id: CONSULTORIOS_DOC_ID, names: [newConsultorioName.trim()] });
-      }
-      setConsultorioNames(prev => [...prev, newConsultorioName.trim()]);
+      await setDoc(consultorioDocRef, { 
+        id: CONSULTORIOS_DOC_ID, // Ensure ID is set if document is new
+        names: arrayUnion(newConsultorioName.trim()) 
+      }, { merge: true });
+      
+      setConsultorioNames(prev => {
+        const newNames = [...prev, newConsultorioName.trim()];
+        return Array.from(new Set(newNames)); // Ensure uniqueness
+      });
       setNewConsultorioName("");
       toast({ title: "Consultorio Añadido", description: `Consultorio "${newConsultorioName.trim()}" añadido y guardado en Firestore.` });
     } catch (error) {
@@ -300,7 +309,7 @@ export default function AdminPage() {
   const handleRemoveConsultorio = async (consultorioNameToRemove: string) => {
     const consultorioDocRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     try {
-      await updateDoc(consultorioDocRef, {
+      await updateDoc(consultorioDocRef, { // updateDoc is fine as doc should exist
           names: arrayRemove(consultorioNameToRemove)
       });
       setConsultorioNames(prev => prev.filter(c => c !== consultorioNameToRemove));
@@ -311,28 +320,27 @@ export default function AdminPage() {
     }
   };
   
-  // Initial Save of Default Config to Firestore (if empty)
   const handleInitialSaveConfig = async () => {
+    setIsLoadingConfig(true);
     const batch = writeBatch(db);
 
-    // Services
-    const servicesFromStatic = DEFAULT_SERVICES_STATIC.map(s => ({
-      id: s.value,
+    const servicesFromStatic: ServiceConfig[] = DEFAULT_SERVICES_STATIC.map(s => ({
+      id: s.value, // This is the service ID like "facturacion"
       label: s.label,
       iconName: Object.keys(serviceIconMap).find(key => serviceIconMap[key] === s.icon) || "Settings",
       prefix: s.prefix,
-      modules: [...s.modules],
+      modules: [...s.modules], // Ensure this is a copy
     }));
 
     servicesFromStatic.forEach(serviceConfig => {
       const serviceRef = doc(db, SERVICE_CONFIG_COLLECTION, serviceConfig.id);
-      batch.set(serviceRef, serviceConfig);
+      // Use setDoc to ensure the document is created with all fields
+      batch.set(serviceRef, serviceConfig); 
     });
     
-    // Consultorios
     const consultorioConfig: ConsultorioConfig = {
       id: CONSULTORIOS_DOC_ID,
-      names: [...DEFAULT_CONSULTORIOS_STATIC]
+      names: [...DEFAULT_CONSULTORIOS_STATIC] // Ensure this is a copy
     };
     const consultorioRef = doc(db, APP_CONFIG_COLLECTION, CONSULTORIOS_DOC_ID);
     batch.set(consultorioRef, consultorioConfig);
@@ -340,22 +348,22 @@ export default function AdminPage() {
     try {
       await batch.commit();
       toast({ title: "Configuración Guardada", description: "La configuración por defecto ha sido guardada en Firestore." });
-      // Re-fetch to ensure UI is in sync with DB
-      await fetchAppConfiguration();
+      await fetchAppConfiguration(); // Re-fetch to ensure UI is in sync with DB
     } catch (error) {
       console.error("Error saving initial config to Firestore:", error);
       toast({ title: "Error al Guardar Config.", description: "No se pudo guardar la configuración inicial en Firestore.", variant: "destructive" });
+    } finally {
+      setIsLoadingConfig(false);
     }
   };
 
 
   const currentModulesForSelectedService = useMemo(() => {
-    // Use serviceConfigs which is ServiceConfig[] (data from DB or initial static)
     return serviceConfigs.find(s => s.id === selectedServiceForModuleMgmt)?.modules || [];
   }, [serviceConfigs, selectedServiceForModuleMgmt]);
 
 
-  if (authLoading || isLoadingConfig) {
+  if (authLoading || (currentUser?.email === ADMIN_EMAIL && isLoadingConfig)) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-secondary/30">
         <Hourglass className="h-16 w-16 text-primary animate-spin" />
@@ -434,11 +442,12 @@ export default function AdminPage() {
                     Gestione usuarios, monitoree tiempos de espera y configure el sistema.
                 </CardDescription>
                  <div className="mt-4">
-                    <Button onClick={handleInitialSaveConfig} variant="outline" size="sm">
+                    <Button onClick={handleInitialSaveConfig} variant="outline" size="sm" disabled={isLoadingConfig}>
+                        {isLoadingConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                         Inicializar/Restablecer Configuración en DB
                     </Button>
                     <p className="text-xs text-muted-foreground mt-1">
-                        (Use esto si la configuración en Firestore está vacía o para restaurar los valores por defecto de los archivos).
+                        (Use esto para poblar Firestore con los valores por defecto de los archivos o para restaurarlos).
                     </p>
                 </div>
             </CardHeader>
@@ -550,7 +559,7 @@ export default function AdminPage() {
                               <SelectValue placeholder="Seleccione un servicio" />
                             </SelectTrigger>
                             <SelectContent>
-                              {editableServices.map(service => ( // Use editableServices (ServiceDefinitionFront)
+                              {editableServices.map(service => ( 
                                 <SelectItem key={service.value} value={service.value}>{service.label}</SelectItem>
                               ))}
                             </SelectContent>
@@ -676,3 +685,5 @@ export default function AdminPage() {
     </main>
   );
 }
+
+    
