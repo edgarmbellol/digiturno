@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image"; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle, Info } from "lucide-react";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
@@ -15,6 +15,14 @@ import { speakText } from '@/lib/tts';
 
 const MAX_RECENTLY_CALLED_TURNS = 4;
 const MAX_UPCOMING_TURNS = 5;
+
+const HOSPITAL_ANNOUNCEMENTS = [
+  "Recuerde lavarse las manos frecuentemente para prevenir infecciones.",
+  "Horario de visitas: Lunes a Viernes de 2:00 PM a 4:00 PM.",
+  "El uso de tapabocas es obligatorio en todas las áreas del hospital.",
+  "Para información sobre campañas de vacunación, acérquese al módulo de información.",
+  "Agradecemos su paciencia y colaboración para mantener un ambiente seguro."
+];
 
 export default function CallPatientPage() {
   const [recentlyCalledTurns, setRecentlyCalledTurns] = useState<Turn[]>([]);
@@ -28,6 +36,15 @@ export default function CallPatientPage() {
   const beepBufferRef = useRef<AudioBuffer | null>(null);
   const userInteractedRef = useRef(false);
   const [showInteractionPrompt, setShowInteractionPrompt] = useState(false);
+
+  const [currentAnnouncementIndex, setCurrentAnnouncementIndex] = useState(0);
+
+  useEffect(() => {
+    const announcementTimer = setInterval(() => {
+      setCurrentAnnouncementIndex(prevIndex => (prevIndex + 1) % HOSPITAL_ANNOUNCEMENTS.length);
+    }, 15000); // Cambiar anuncio cada 15 segundos
+    return () => clearInterval(announcementTimer);
+  }, []);
 
 
   useEffect(() => {
@@ -202,6 +219,10 @@ export default function CallPatientPage() {
         }
       } else {
         // console.log("Firestore: No hay turnos llamados actualmente.");
+         // Si no hay turnos llamados, pero antes sí había (prevTop era un ID), reseteamos prevTop
+        if (prevTopCalledTurnIdRef.current) {
+          prevTopCalledTurnIdRef.current = null;
+        }
       }
       setRecentlyCalledTurns(calledTurnsData);
       if (isLoading) setIsLoading(false);
@@ -245,7 +266,7 @@ export default function CallPatientPage() {
         clearTimeout(announcementTimeoutIdRef.current);
       }
     };
-  }, [toast]); // Added toast to dependency array as it's used inside
+  }, [toast, isLoading]); // Added isLoading to dependency array
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -273,7 +294,8 @@ export default function CallPatientPage() {
   if (isLoading && recentlyCalledTurns.length === 0) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 via-background to-background">
-        <Hourglass className="h-16 w-16 text-primary animate-spin" />
+        <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={120} height={115} priority data-ai-hint="hospital logo"/>
+        <Hourglass className="h-16 w-16 text-primary animate-spin mt-8" />
         <p className="text-xl text-muted-foreground mt-4">Cargando pantalla de turnos...</p>
       </main>
     );
@@ -361,7 +383,7 @@ export default function CallPatientPage() {
           </CardContent>
         </Card>
 
-        <Card className="w-full shadow-xl bg-card/80 backdrop-blur-sm">
+        <Card className="w-full shadow-xl bg-card/80 backdrop-blur-sm mb-6">
           <CardHeader className="bg-secondary/20 p-4 rounded-t-lg">
             <CardTitle className="text-2xl sm:text-3xl font-semibold text-secondary-foreground flex items-center">
               <Users className="mr-3 h-7 w-7" /> Próximos Turnos (Ventanilla/Recepción)
@@ -389,6 +411,21 @@ export default function CallPatientPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Sección de Anuncios del Hospital */}
+        <Card className="w-full shadow-md bg-blue-500/5 border-blue-500/20">
+          <CardHeader className="p-3 bg-blue-500/10 rounded-t-lg">
+            <CardTitle className="text-lg font-semibold text-blue-700 flex items-center">
+              <Info className="mr-2 h-5 w-5" /> Anuncios del Hospital
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 text-center min-h-[60px] flex items-center justify-center">
+            <p className="text-base text-blue-600 animate-fadeIn">
+              {HOSPITAL_ANNOUNCEMENTS[currentAnnouncementIndex]}
+            </p>
+          </CardContent>
+        </Card>
+
       </div>
        <footer className="mt-8 text-center text-xs text-muted-foreground/80 w-full">
         <p>&copy; {new Date().getFullYear()} TurnoFacil. Todos los derechos reservados.</p>
