@@ -12,7 +12,7 @@ import {
   FormControl,
   FormField,
   FormItem,
-  FormLabel,
+  FormLabel as ShadcnFormLabel, // Renamed to avoid conflict if we use Radix Label directly
   FormMessage,
 } from "@/components/ui/form";
 import {
@@ -25,7 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, UserX, Loader2, UserPlus, Accessibility, Settings, Ticket, PersonStanding, Baby, HeartHandshake } from "lucide-react";
+import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, Loader2, UserPlus, Accessibility, Settings, Ticket, PersonStanding, Baby, HeartHandshake } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
@@ -143,23 +143,32 @@ export default function TurnForm() {
 
   const { reset, control, setValue, getValues, trigger } = form;
 
-  const handleSpecialConditionChange = (conditionName: keyof FormValues, checked: boolean) => {
-    setValue(conditionName, checked, { shouldValidate: true });
+  const handleDependentSpecialConditions = (
+    conditionName: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">,
+    isChecked: boolean
+  ) => {
+    // The primary field (conditionName) is assumed to be already updated via field.onChange by RHF.
+    // This function now only handles the *dependent* logic.
 
-    if (conditionName === 'isNone' && checked) {
+    if (conditionName === 'isNone') {
+      if (isChecked) { // If "Ninguna" was just checked
+        // Uncheck all other priority conditions
         setValue('isSenior', false, { shouldValidate: false });
         setValue('isPregnant', false, { shouldValidate: false });
         setValue('isDisabled', false, { shouldValidate: false });
-    } else if (checked && conditionName !== 'isNone') {
+      }
+      // If "Ninguna" was unchecked, Zod's refine will handle validation if no priority is selected.
+    } else { // A priority condition (isSenior, isPregnant, isDisabled) was just changed
+      if (isChecked) { // If a priority condition was just checked
+        // Uncheck "Ninguna"
         setValue('isNone', false, { shouldValidate: false });
+      }
+      // If a priority condition was unchecked, Zod's refine handles validation.
     }
-
-    const currentValues = getValues();
-    if (!currentValues.isSenior && !currentValues.isPregnant && !currentValues.isDisabled && !currentValues.isNone) {
-        setValue('isNone', true, { shouldValidate: true });
-    }
+    // After all dependent setValue calls, trigger validation for the group.
     trigger(['isNone', 'isSenior', 'isPregnant', 'isDisabled']);
   };
+
 
   const fetchPatientNameById = async (idDocument: string) => {
     if (!idDocument.trim() || idDocument.trim().length < 3) {
@@ -299,7 +308,7 @@ export default function TurnForm() {
       <Card className="w-full max-w-xl shadow-xl transform transition-all duration-300">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
           <div className="flex flex-col items-center mb-3">
-            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} priority data-ai-hint="hospital logo" />
+            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={70} height={66} priority data-ai-hint="hospital logo" />
           </div>
           <div className="mx-auto bg-background/20 text-primary-foreground p-2.5 rounded-full w-fit mb-3">
             <PartyPopper className="h-10 w-10" />
@@ -327,7 +336,7 @@ export default function TurnForm() {
            </p>
         </CardContent>
         <CardFooter className="p-4">
-          <Button onClick={handleNewTurn} className="w-full bg-accent text-accent-foreground hover:bg-accent/90 text-xl py-3 h-14">
+          <Button onClick={handleNewTurn} className="w-full bg-accent text-accent-foreground hover:bg-accent/90 text-lg py-3 h-12">
             <ChevronRight className="mr-2 h-6 w-6 transform rotate-180" />
             Solicitar Nuevo Turno
           </Button>
@@ -340,14 +349,14 @@ export default function TurnForm() {
     <Card className="w-full max-w-3xl shadow-2xl overflow-hidden">
       <CardHeader className="bg-primary text-primary-foreground p-4 md:p-6 rounded-t-lg text-center">
         <div className="flex flex-col items-center mb-2">
-          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} priority data-ai-hint="hospital logo" />
+          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={70} height={66} priority data-ai-hint="hospital logo" />
         </div>
         <div className="flex items-center justify-center gap-2">
-            <Ticket className="h-10 w-10 md:h-12 md:w-12" />
-            <CardTitle className="text-3xl md:text-4xl font-bold">Solicitar Turno</CardTitle>
+            <Ticket className="h-8 w-8 md:h-10 md:w-10" />
+            <CardTitle className="text-2xl md:text-3xl font-bold">Solicitar Turno</CardTitle>
         </div>
-        <CardDescription className="text-primary-foreground/90 pt-1 text-base md:text-lg">
-          Siga los pasos para obtener su turno. Es fácil y rápido.
+        <CardDescription className="text-primary-foreground/90 pt-1 text-md md:text-lg">
+          Complete los datos para obtener su turno.
         </CardDescription>
       </CardHeader>
       <Form {...form}>
@@ -355,17 +364,16 @@ export default function TurnForm() {
           <CardContent className="p-4 md:p-6">
             <div className="grid md:grid-cols-2 md:gap-x-10 gap-y-8">
 
-              {/* Columna Izquierda: Identificación y Nombre */}
               <div className="space-y-8">
                 <FormField
                   control={control}
                   name="idNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2 mb-2">
+                      <ShadcnFormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-2">
                         <UserCheck className="h-7 w-7 text-primary" />
                         1. Su Identificación
-                      </FormLabel>
+                      </ShadcnFormLabel>
                       <FormControl>
                         <div className="flex items-center space-x-2">
                           <Input
@@ -389,10 +397,10 @@ export default function TurnForm() {
                   name="patientName"
                   render={({ field }) => (
                     <FormItem className={(showManualNameInput || getValues("patientName")) ? "block" : "hidden"}>
-                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2 mb-2">
+                      <ShadcnFormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-2">
                          <UserPlus className="h-7 w-7 text-primary" />
                         2. Su Nombre Completo
-                      </FormLabel>
+                      </ShadcnFormLabel>
                       <FormControl>
                          <Input
                             placeholder="Nombre como aparece en la cédula"
@@ -412,21 +420,20 @@ export default function TurnForm() {
                 />
               </div>
 
-              {/* Columna Derecha: Servicio y Condiciones */}
               <div className="space-y-8">
                  <FormField
                   control={control}
                   name="service"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2 mb-2">
+                      <ShadcnFormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-2">
                         <Settings className="h-7 w-7 text-primary" />
                         3. ¿Qué Servicio Necesita?
-                      </FormLabel>
+                      </ShadcnFormLabel>
                        {isLoadingServiceConfig ? (
-                         <div className="flex items-center text-base text-muted-foreground pt-2"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando servicios...</div>
+                         <div className="flex items-center text-lg text-muted-foreground pt-2"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando servicios...</div>
                        ) : availableServices.length === 0 ? (
-                         <p className="text-base text-destructive pt-2">No hay servicios disponibles. Contacte al administrador.</p>
+                         <p className="text-lg text-destructive pt-2">No hay servicios disponibles. Contacte al administrador.</p>
                        ) : (
                         <Select onValueChange={field.onChange} value={field.value || ""} disabled={availableServices.length === 0}>
                             <FormControl>
@@ -454,11 +461,11 @@ export default function TurnForm() {
                     </FormItem>
                   )}
                 />
-                <div className="space-y-4">
-                    <FormLabel className="text-xl font-semibold text-foreground mb-3 block flex items-center gap-2">
+                <div className="space-y-3">
+                    <ShadcnFormLabel className="text-lg font-semibold text-foreground mb-2 block flex items-center gap-2">
                         <Accessibility className="h-7 w-7 text-primary" />
                         4. ¿Alguna Condición Especial?
-                    </FormLabel>
+                    </ShadcnFormLabel>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {specialConditions.map((item) => (
                         <FormField
@@ -466,32 +473,50 @@ export default function TurnForm() {
                         control={control}
                         name={item.name as keyof FormValues}
                         render={({ field }) => (
-                            <FormItem
-                            className={cn(
-                                "flex flex-col items-center justify-center space-y-2 p-4 border-2 rounded-lg transition-all cursor-pointer hover:border-primary/80 min-h-[140px]",
-                                field.value
-                                ? 'bg-primary/20 border-primary ring-2 ring-primary/40 shadow-lg'
-                                : 'bg-card hover:bg-secondary/50 border-input'
-                            )}
-                            onClick={() => handleSpecialConditionChange(item.name as keyof FormValues, !field.value)}
-                            >
-                                <Checkbox
-                                    // ref={field.ref} // Intentionally removed to prevent potential RHF interference
-                                    checked={field.value}
-                                    // onCheckedChange is intentionally omitted as FormItem onClick handles the logic
-                                    className="sr-only"
-                                    id={field.name}
-                                    aria-labelledby={`${field.name}-label`}
-                                />
-                                <item.icon className={cn("h-12 w-12 mb-2", field.value ? 'text-primary' : 'text-foreground/70')} />
-                                <FormLabel
-                                id={`${field.name}-label`}
-                                htmlFor={field.name} // Still useful for associating label text for screen readers
-                                className={cn("font-semibold text-base text-center m-0 leading-tight", field.value ? 'text-primary' : 'text-foreground/90')}
+                            <div // Outer div for styling the clickable area
+                                className={cn(
+                                    "flex flex-col items-center justify-center space-y-1.5 p-3 border-2 rounded-lg transition-all cursor-pointer hover:border-primary/80 min-h-[120px]",
+                                    field.value ? 'bg-primary/20 border-primary ring-2 ring-primary/40 shadow-md' : 'bg-card hover:bg-secondary/30 border-input'
+                                )}
+                                onClick={() => {
+                                    // This onClick now directly triggers the field's onChange and then dependent logic
+                                    const newValue = !field.value;
+                                    field.onChange(newValue); // Update the current field's state via RHF
+                                    handleDependentSpecialConditions(item.name as keyof FormValues, newValue);
+                                }}
+                                role="button" // Can act as a button, label association is via htmlFor to sr-only checkbox
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                    if (e.key === ' ' || e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const newValue = !field.value;
+                                    field.onChange(newValue);
+                                    handleDependentSpecialConditions(item.name as keyof FormValues, newValue);
+                                    }
+                                }}
                                 >
-                                {item.label}
-                                </FormLabel>
-                            </FormItem>
+                                <ShadcnFormLabel // This label wraps the visual content making it clickable for the checkbox
+                                    htmlFor={field.name}
+                                    className="contents cursor-pointer" // Use 'contents' to not affect layout, just make children part of label
+                                >
+                                    <item.icon className={cn("h-10 w-10 mb-1.5", field.value ? 'text-primary' : 'text-foreground/60')} />
+                                    <span
+                                    className={cn("font-semibold text-base text-center m-0 leading-tight", field.value ? 'text-primary' : 'text-foreground/80')}
+                                    >
+                                    {item.label}
+                                    </span>
+                                </ShadcnFormLabel>
+                                <Checkbox // This is the actual RHF controlled input, sr-only for visuals
+                                    {...field} // Spread field to connect RHF (ref, name, etc.)
+                                    checked={field.value}
+                                    onCheckedChange={(checkedValue) => { // This is RHF's field.onChange
+                                        field.onChange(checkedValue); // Update the field
+                                        handleDependentSpecialConditions(item.name as keyof FormValues, !!checkedValue); // Handle dependent logic
+                                    }}
+                                    id={field.name}
+                                    className="sr-only"
+                                />
+                            </div>
                         )}
                         />
                     ))}
@@ -513,6 +538,3 @@ export default function TurnForm() {
     </Card>
   );
 }
-
-        
-    
