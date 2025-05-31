@@ -12,7 +12,7 @@ import {
   FormControl,
   FormField,
   FormItem,
-  FormLabel, // Usaremos FormLabel de ui/form directamente
+  FormLabel,
   FormMessage,
 } from "@/components/ui/form";
 import {
@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox"; // Todavía se usa internamente
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, Loader2, UserPlus, Accessibility, Settings, Ticket, PersonStanding, Baby, HeartHandshake } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -65,8 +65,8 @@ const formSchema = z.object({
         return selectedPriorityCount >= 1; // Si "Ninguna" no está marcada, al menos una prioritaria debe estarlo.
     }
 }, {
-    message: "Seleccione al menos una condición prioritaria o 'Ninguna Condición'. No pueden estar ambas seleccionadas.",
-    path: ["isNone"], // El error se mostrará asociado a "Ninguna" o a la primera prioritaria, ajustar según prefiera.
+    message: "Seleccione 'Ninguna Condición' o al menos una condición prioritaria. No pueden estar ambas seleccionadas, ni ninguna opción desmarcada.",
+    path: ["isNone"], 
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -89,6 +89,8 @@ export default function TurnForm() {
 
   const [availableServices, setAvailableServices] = useState<ServiceDefinitionFront[]>([]);
   const [isLoadingServiceConfig, setIsLoadingServiceConfig] = useState(true);
+
+  const selectKey = `service-select-${isLoadingServiceConfig}-${availableServices.length}`;
 
   const fetchServiceConfiguration = useCallback(async () => {
     setIsLoadingServiceConfig(true);
@@ -141,40 +143,46 @@ export default function TurnForm() {
     },
   });
 
-  const { reset, control, setValue, getValues, trigger, watch } = form;
+  const { reset, control, setValue, getValues, trigger } = form;
 
-  // Observar los cambios en los checkboxes de condiciones especiales
-  const isSenior = watch("isSenior");
-  const isPregnant = watch("isPregnant");
-  const isDisabled = watch("isDisabled");
-  const isNone = watch("isNone");
-
-  // Lógica para manejar la interdependencia de los checkboxes de condiciones especiales
-  const handleSpecialConditionChange = (
+  const handleDependentSpecialConditions = (
     changedFieldName: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">,
-    isChecked: boolean
+    isChecked: boolean // El nuevo estado del checkbox que se acaba de cambiar
   ) => {
+    // No es necesario llamar a getValues() aquí si la lógica depende del campo que acaba de cambiar.
+    // Los valores para los *otros* campos se pueden obtener de getValues si es necesario,
+    // pero es crucial que el estado de 'changedFieldName' ya esté actualizado por field.onChange.
+    
     if (changedFieldName === 'isNone') {
-      if (isChecked) {
-        // Si "Ninguna" es marcada, desmarcar las otras
-        setValue('isSenior', false, { shouldValidate: true });
-        setValue('isPregnant', false, { shouldValidate: true });
-        setValue('isDisabled', false, { shouldValidate: true });
+      if (isChecked) { // Si "Ninguna" se acaba de marcar
+        // Desmarcar todas las prioritarias
+        setValue('isSenior', false, { shouldValidate: false, shouldDirty: true });
+        setValue('isPregnant', false, { shouldValidate: false, shouldDirty: true });
+        setValue('isDisabled', false, { shouldValidate: false, shouldDirty: true });
       }
-    } else {
-      // Si una condición prioritaria es marcada
-      if (isChecked) {
-        setValue('isNone', false, { shouldValidate: true });
-      } else {
-        // Si todas las prioritarias están desmarcadas, marcar "Ninguna"
-        const currentValues = getValues();
-        if (!currentValues.isSenior && !currentValues.isPregnant && !currentValues.isDisabled) {
-          setValue('isNone', true, { shouldValidate: true });
+    } else { // Si una condición prioritaria (isSenior, isPregnant, isDisabled) se acaba de cambiar
+      if (isChecked) { // Si una prioritaria se acaba de marcar
+        // Desmarcar "Ninguna"
+        setValue('isNone', false, { shouldValidate: false, shouldDirty: true });
+      } else { // Si una prioritaria se acaba de desmarcar
+        // Comprobar si todas las demás prioritarias también están desmarcadas
+        const currentValues = getValues(); // Obtener valores actuales para tomar la decisión
+        const allPrioritiesNowUnchecked = 
+          !currentValues.isSenior && 
+          !currentValues.isPregnant && 
+          !currentValues.isDisabled;
+
+        if (allPrioritiesNowUnchecked) {
+          // Si todas las prioritarias están ahora desmarcadas (incluyendo la que se acaba de desmarcar),
+          // marcar "Ninguna"
+          setValue('isNone', true, { shouldValidate: false, shouldDirty: true });
         }
       }
     }
-    // Disparar validación para los campos afectados
-    trigger(['isSenior', 'isPregnant', 'isDisabled', 'isNone']);
+    // Disparar la validación global del formulario al final, después de todos los cambios de `setValue`
+    // Esto es importante para que Zod refine() tenga la última información.
+    // Retrasar ligeramente el trigger puede ayudar si hay problemas de sincronización con los updates.
+    setTimeout(() => trigger(), 0);
   };
 
 
@@ -313,39 +321,39 @@ export default function TurnForm() {
 
   if (isSubmitted && submittedTurnNumber && submittedServiceLabel && submittedIdNumber && submittedPatientName) {
     return (
-      <Card className="w-full max-w-xl shadow-xl transform transition-all duration-300">
+      <Card className="w-full max-w-lg shadow-xl transform transition-all duration-300">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
           <div className="flex flex-col items-center mb-3">
-            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} priority data-ai-hint="hospital logo" />
+            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={70} height={66} priority data-ai-hint="hospital logo" />
           </div>
-          <div className="mx-auto bg-background/20 text-primary-foreground p-3 rounded-full w-fit mb-3">
-            <PartyPopper className="h-12 w-12" />
+          <div className="mx-auto bg-background/20 text-primary-foreground p-2 rounded-full w-fit mb-2">
+            <PartyPopper className="h-10 w-10" />
           </div>
-          <CardTitle className="text-3xl font-bold">¡Turno Registrado!</CardTitle>
-          <CardDescription className="text-primary-foreground/80 text-xl mt-1">
+          <CardTitle className="text-2xl font-bold">¡Turno Registrado!</CardTitle>
+          <CardDescription className="text-primary-foreground/80 text-lg mt-1">
             Su turno <span className="font-semibold">{submittedTurnNumber}</span> ha sido procesado.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4 text-xl p-6">
-          <div className="flex justify-between border-b pb-2">
+        <CardContent className="space-y-3 text-lg p-5">
+          <div className="flex justify-between border-b pb-1.5">
             <span className="font-medium text-muted-foreground">Paciente:</span>
             <span className="font-semibold text-foreground text-right">{submittedPatientName}</span>
           </div>
-          <div className="flex justify-between border-b pb-2">
+          <div className="flex justify-between border-b pb-1.5">
             <span className="font-medium text-muted-foreground">Identificación:</span>
             <span className="font-semibold text-foreground">CC {submittedIdNumber}</span>
           </div>
-          <div className="flex justify-between border-b pb-2">
+          <div className="flex justify-between border-b pb-1.5">
             <span className="font-medium text-muted-foreground">Servicio:</span>
             <span className="font-semibold text-foreground text-right">{submittedServiceLabel}</span>
           </div>
-           <p className="text-center text-muted-foreground pt-4 text-lg">
+           <p className="text-center text-muted-foreground pt-3 text-base">
              Por favor, esté atento a la pantalla. Pronto será llamado.
            </p>
         </CardContent>
         <CardFooter className="p-4">
-          <Button onClick={handleNewTurn} className="w-full bg-accent text-accent-foreground hover:bg-accent/90 text-xl py-3 h-14">
-            <ChevronRight className="mr-2 h-7 w-7 transform rotate-180" />
+          <Button onClick={handleNewTurn} className="w-full bg-accent text-accent-foreground hover:bg-accent/90 text-lg py-2.5 h-11">
+            <ChevronRight className="mr-2 h-6 w-6 transform rotate-180" />
             Solicitar Nuevo Turno
           </Button>
         </CardFooter>
@@ -353,36 +361,35 @@ export default function TurnForm() {
     );
   }
 
-  const selectKey = `service-select-${isLoadingServiceConfig}-${availableServices.length}`;
 
   return (
     <Card className="w-full max-w-3xl shadow-2xl overflow-hidden">
-      <CardHeader className="bg-primary text-primary-foreground p-4 md:p-6 rounded-t-lg text-center">
+      <CardHeader className="bg-primary text-primary-foreground p-4 md:p-5 rounded-t-lg text-center">
         <div className="flex flex-col items-center mb-2">
-          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} priority data-ai-hint="hospital logo" />
+          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={70} height={66} priority data-ai-hint="hospital logo" />
         </div>
         <div className="flex items-center justify-center gap-2">
-            <Ticket className="h-10 w-10 md:h-12 md:w-12" />
-            <CardTitle className="text-3xl md:text-4xl font-bold">Solicitar Turno</CardTitle>
+            <Ticket className="h-8 w-8 md:h-10 md:w-10" />
+            <CardTitle className="text-2xl md:text-3xl font-bold">Solicitar Turno</CardTitle>
         </div>
-        <CardDescription className="text-primary-foreground/90 pt-1 text-lg md:text-xl">
-          Complete los datos para obtener su turno de forma fácil y rápida.
+        <CardDescription className="text-primary-foreground/90 pt-1 text-base md:text-lg">
+          Complete los datos para obtener su turno.
         </CardDescription>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <CardContent className="p-4 md:p-6">
-            <div className="grid md:grid-cols-2 md:gap-x-10 gap-y-8">
+            <div className="grid md:grid-cols-2 md:gap-x-8 gap-y-6">
 
               {/* Columna Izquierda: Datos del Paciente */}
-              <div className="space-y-8">
+              <div className="space-y-6">
                 <FormField
                   control={control}
                   name="idNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2 mb-2">
-                        <UserCheck className="h-8 w-8 text-primary" />
+                      <FormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1.5">
+                        <UserCheck className="h-7 w-7 text-primary" />
                         1. Su Identificación
                       </FormLabel>
                       <FormControl>
@@ -390,16 +397,16 @@ export default function TurnForm() {
                           <Input
                             placeholder="Número de cédula"
                             {...field}
-                            className="text-2xl h-16"
+                            className="text-xl h-12"
                             onBlur={(e) => {
                               field.onBlur();
                               fetchPatientNameById(e.target.value);
                             }}
                           />
-                          {isFetchingPatientName && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
+                          {isFetchingPatientName && <Loader2 className="h-7 w-7 animate-spin text-primary" />}
                         </div>
                       </FormControl>
-                      <FormMessage className="text-lg"/>
+                      <FormMessage className="text-base"/>
                     </FormItem>
                   )}
                 />
@@ -408,53 +415,53 @@ export default function TurnForm() {
                   name="patientName"
                   render={({ field }) => (
                     <FormItem className={(showManualNameInput || getValues("patientName")) ? "block" : "hidden"}>
-                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2 mb-2">
-                         <UserPlus className="h-8 w-8 text-primary" />
+                      <FormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1.5">
+                         <UserPlus className="h-7 w-7 text-primary" />
                         2. Su Nombre Completo
                       </FormLabel>
                       <FormControl>
                          <Input
                             placeholder="Nombre como aparece en la cédula"
                             {...field}
-                            className="text-2xl h-16"
+                            className="text-xl h-12"
                             disabled={isFetchingPatientName || (!showManualNameInput && !!getValues("patientName") && !form.formState.errors.patientName)}
                           />
                       </FormControl>
                        {showManualNameInput && !isFetchingPatientName && (
-                        <p className="text-lg text-muted-foreground mt-1">
+                        <p className="text-base text-muted-foreground mt-1">
                           No pudimos encontrar su nombre, por favor ingréselo.
                         </p>
                       )}
-                      <FormMessage className="text-lg"/>
+                      <FormMessage className="text-base"/>
                     </FormItem>
                   )}
                 />
               </div>
 
               {/* Columna Derecha: Detalles del Turno */}
-              <div className="space-y-8">
+              <div className="space-y-6">
                  <FormField
                   control={control}
                   name="service"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2 mb-2">
-                        <Settings className="h-8 w-8 text-primary" />
+                      <FormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1.5">
+                        <Settings className="h-7 w-7 text-primary" />
                         3. ¿Qué Servicio Necesita?
                       </FormLabel>
                        {isLoadingServiceConfig ? (
-                         <div className="flex items-center text-lg text-muted-foreground pt-2"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando servicios...</div>
+                         <div className="flex items-center text-base text-muted-foreground pt-2"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando servicios...</div>
                        ) : availableServices.length === 0 ? (
-                         <p className="text-lg text-destructive pt-2">No hay servicios disponibles. Contacte al administrador.</p>
+                         <p className="text-base text-destructive pt-2">No hay servicios disponibles. Contacte al administrador.</p>
                        ) : (
                         <Select
-                          key={selectKey} // Key para forzar re-montaje
+                          key={selectKey}
                           onValueChange={field.onChange}
                           value={field.value || ""}
                           disabled={availableServices.length === 0}
                         >
                             <FormControl>
-                            <SelectTrigger className="text-2xl h-16">
+                            <SelectTrigger className="text-xl h-12">
                                 <SelectValue
                                 placeholder={
                                     <span className="text-muted-foreground">
@@ -466,9 +473,9 @@ export default function TurnForm() {
                             </FormControl>
                             <SelectContent>
                             {availableServices.map((service) => (
-                                <SelectItem key={service.id} value={service.id} className="text-xl py-3">
-                                <div className="flex items-center gap-3">
-                                    <service.icon className="h-7 w-7 text-muted-foreground" />
+                                <SelectItem key={service.id} value={service.id} className="text-lg py-2.5">
+                                <div className="flex items-center gap-2.5">
+                                    <service.icon className="h-6 w-6 text-muted-foreground" />
                                     {service.label}
                                 </div>
                                 </SelectItem>
@@ -476,78 +483,65 @@ export default function TurnForm() {
                             </SelectContent>
                         </Select>
                        )}
-                      <FormMessage className="text-lg"/>
+                      <FormMessage className="text-base"/>
                     </FormItem>
                   )}
                 />
-                <div className="space-y-3">
-                    <FormLabel className="text-xl font-semibold text-foreground mb-3 block flex items-center gap-2">
-                        <Accessibility className="h-8 w-8 text-primary" />
+                <div className="space-y-2">
+                    <FormLabel className="text-lg font-semibold text-foreground mb-2 block flex items-center gap-2">
+                        <Accessibility className="h-7 w-7 text-primary" />
                         4. ¿Alguna Condición Especial?
                     </FormLabel>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {specialConditions.map((item) => (
                         <FormField
-                        key={item.name}
-                        control={control}
-                        name={item.name as keyof FormValues}
-                        render={({ field }) => (
-                            <FormItem // Contenedor del checkbox personalizado
+                            key={item.name}
+                            control={control}
+                            name={item.name}
+                            render={({ field }) => (
+                            <FormItem
                                 className={cn(
-                                "flex flex-col items-center justify-center space-y-2 p-3 border-2 rounded-lg transition-all cursor-pointer hover:border-primary/80 min-h-[130px]",
-                                field.value ? 'bg-primary/20 border-primary ring-2 ring-primary/40 shadow-lg' : 'bg-card hover:bg-secondary/30 border-input'
+                                "flex flex-row items-center space-x-3 space-y-0 rounded-lg border-2 p-3.5 shadow-sm transition-all hover:shadow-md cursor-pointer",
+                                field.value ? "border-primary bg-primary/10 ring-2 ring-primary/30" : "border-input hover:bg-secondary/50"
                                 )}
-                                onClick={() => {
-                                  // Llama a field.onChange para este campo
-                                  field.onChange(!field.value);
-                                  // Luego maneja la lógica dependiente para otros campos
-                                  handleSpecialConditionChange(item.name as keyof FormValues, !field.value);
-                                }}
-                                role="checkbox"
-                                aria-checked={field.value}
-                                tabIndex={0}
-                                onKeyDown={(e) => {
-                                    if (e.key === ' ' || e.key === 'Enter') {
-                                      e.preventDefault();
-                                      field.onChange(!field.value);
-                                      handleSpecialConditionChange(item.name as keyof FormValues, !field.value);
-                                    }
-                                }}
                             >
-                                <FormLabel htmlFor={field.name} className="contents cursor-pointer">
-                                    <item.icon className={cn("h-12 w-12 mb-1.5", field.value ? 'text-primary' : 'text-foreground/70')} />
-                                    <span
-                                    className={cn("font-semibold text-lg text-center m-0 leading-tight", field.value ? 'text-primary' : 'text-foreground/80')}
-                                    >
-                                    {item.label}
-                                    </span>
-                                </FormLabel>
-                                {/* Checkbox real, oculto visualmente, para RHF y accesibilidad */}
+                                <FormControl>
                                 <Checkbox
-                                    id={field.name}
                                     checked={field.value}
-                                    // onCheckedChange ya no es necesario aquí si FormItem lo maneja
-                                    className="sr-only"
-                                    ref={field.ref} // Asegurar que RHF pueda registrar el input
-                                    name={field.name}
-                                    onBlur={field.onBlur}
-                                    disabled={field.disabled}
+                                    onCheckedChange={(checked) => {
+                                      const newCheckedState = !!checked;
+                                      field.onChange(newCheckedState);
+                                      handleDependentSpecialConditions(item.name, newCheckedState);
+                                    }}
+                                    id={field.name}
+                                    className="h-6 w-6"
                                 />
+                                </FormControl>
+                                <FormLabel
+                                htmlFor={field.name}
+                                className={cn(
+                                    "font-semibold text-base cursor-pointer flex items-center gap-2.5 w-full",
+                                    field.value ? "text-primary" : "text-foreground/90"
+                                )}
+                                >
+                                <item.icon className={cn("h-8 w-8", field.value ? "text-primary" : "text-primary/80")} />
+                                {item.label}
+                                </FormLabel>
                             </FormItem>
-                        )}
+                            )}
                         />
                     ))}
                     </div>
-                    <FormMessage className="pt-1 text-lg">{form.formState.errors.isNone?.message || form.formState.errors.isSenior?.message || form.formState.errors.isPregnant?.message || form.formState.errors.isDisabled?.message}</FormMessage>
+                    <FormMessage className="pt-1 text-base">{form.formState.errors.isNone?.message}</FormMessage>
                 </div>
               </div>
             </div>
           </CardContent>
-          <CardFooter className="p-4 md:p-6 border-t mt-6 md:mt-8">
-            <Button type="submit" className="w-full text-2xl py-4 bg-accent text-accent-foreground hover:bg-accent/90 h-20" disabled={isSubmitting || isFetchingPatientName || isLoadingServiceConfig || availableServices.length === 0}>
+          <CardFooter className="p-4 md:p-6 border-t mt-4 md:mt-6">
+            <Button type="submit" className="w-full text-xl py-3 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting || isFetchingPatientName || isLoadingServiceConfig || availableServices.length === 0}>
               {isSubmitting ? "Registrando..." : (isFetchingPatientName ? "Verificando..." : (isLoadingServiceConfig ? "Cargando..." : "Confirmar y Solicitar Turno"))}
-              {!isSubmitting && !isFetchingPatientName && !isLoadingServiceConfig && <CheckCircle2 className="ml-3 h-8 w-8" />}
-              {(isFetchingPatientName || isLoadingServiceConfig || isSubmitting) && <Loader2 className="ml-3 h-8 w-8 animate-spin" />}
+              {!isSubmitting && !isFetchingPatientName && !isLoadingServiceConfig && <CheckCircle2 className="ml-2.5 h-7 w-7" />}
+              {(isFetchingPatientName || isLoadingServiceConfig || isSubmitting) && <Loader2 className="ml-2.5 h-7 w-7 animate-spin" />}
             </Button>
           </CardFooter>
         </form>
@@ -555,5 +549,6 @@ export default function TurnForm() {
     </Card>
   );
 }
+    
 
     
