@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image"; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle, Info } from "lucide-react";
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
@@ -14,7 +14,7 @@ import { es } from 'date-fns/locale';
 import { speakText } from '@/lib/tts';
 
 const MAX_RECENTLY_CALLED_TURNS = 4;
-const MAX_UPCOMING_TURNS_DISPLAY = 6; // Mostrar hasta 6 próximos turnos en la TV
+const MAX_UPCOMING_TURNS_DISPLAY = 6; 
 
 export default function CallPatientPage() {
   const [recentlyCalledTurns, setRecentlyCalledTurns] = useState<Turn[]>([]);
@@ -200,7 +200,7 @@ export default function CallPatientPage() {
       unsubscribePending();
       if (announcementTimeoutIdRef.current) clearTimeout(announcementTimeoutIdRef.current);
     };
-  }, [toast, isLoading]); // isLoading dependency is important here
+  }, [toast, isLoading]);
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -236,24 +236,31 @@ export default function CallPatientPage() {
   const secondaryCalledTurns = recentlyCalledTurns.slice(1);
 
   return (
-    <main className="flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6 lg:p-8">
-      <div className="w-full flex justify-center mb-4 lg:mb-8">
-        <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={120} height={115} priority data-ai-hint="hospital logo"/>
-      </div>
+    <main className="relative flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6 lg:p-8">
+      <Image
+        src="/logo-hospital.png"
+        alt="Logo Hospital Divino Salvador de Sopó"
+        width={90}
+        height={86}
+        priority
+        data-ai-hint="hospital logo"
+        className="absolute top-4 left-4 z-20 md:top-6 md:left-6"
+      />
+      
       {showInteractionPrompt && !userInteractedRef.current && (
-        <Card className="w-full max-w-xl mb-4 shadow-lg border-2 border-yellow-500 bg-yellow-500/10">
+        <Card className="w-full max-w-xl mt-4 mb-4 shadow-lg border-2 border-yellow-500 bg-yellow-500/10 z-10"> {/* mt-4 para que no choque con logo si el padding es muy pequeño */}
           <CardContent className="p-4 text-center">
             <div className="flex items-center justify-center">
               <AlertTriangle className="h-8 w-8 text-yellow-600 mr-3" />
               <div>
-                <p className="font-semibold text-yellow-700 text-lg">El audio está desactivado.</p>
+                <p className="font-semibold text-yellow-700 text-lg md:text-xl">El audio está desactivado.</p>
                 <p className="text-md text-yellow-600">Por favor, haz clic en cualquier parte de la página para activar los sonidos y anuncios de voz.</p>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
-      <div className="w-full max-w-screen-xl">
+      <div className="w-full max-w-screen-xl mt-4"> {/* mt-4 para asegurar que el contenido principal esté debajo del logo */}
         <Card className="w-full shadow-2xl mb-6 lg:mb-8 bg-card/80 backdrop-blur-sm">
           <CardHeader className="bg-primary/10 text-primary-foreground p-4 lg:p-6 rounded-t-lg">
              <div className="flex items-center justify-center gap-2 lg:gap-3">
@@ -408,5 +415,3 @@ export default function CallPatientPage() {
     </main>
   );
 }
-
-  
