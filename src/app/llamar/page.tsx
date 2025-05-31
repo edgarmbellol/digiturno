@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image"; 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle } from "lucide-react";
+import { Megaphone, Hourglass, Users, CalendarClock, Stethoscope, UserCircle, Volume2, AlertTriangle, Info } from "lucide-react";
 import type { Turn } from '@/types/turn';
 import { db } from "@/lib/firebase";
 import { collection, query, where, orderBy, onSnapshot, limit, Timestamp, or } from "firebase/firestore";
@@ -14,7 +14,7 @@ import { es } from 'date-fns/locale';
 import { speakText } from '@/lib/tts';
 
 const MAX_RECENTLY_CALLED_TURNS = 4;
-const MAX_UPCOMING_TURNS = 5;
+const MAX_UPCOMING_TURNS_DISPLAY = 6; // Mostrar hasta 6 próximos turnos en la TV
 
 export default function CallPatientPage() {
   const [recentlyCalledTurns, setRecentlyCalledTurns] = useState<Turn[]>([]);
@@ -30,7 +30,6 @@ export default function CallPatientPage() {
   const [showInteractionPrompt, setShowInteractionPrompt] = useState(false);
 
   useEffect(() => {
-    // console.log("CallPatientPage: useEffect para inicialización de audio ejecutándose.");
     if (typeof window !== "undefined") {
       try {
         const context = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -46,15 +45,12 @@ export default function CallPatientPage() {
           data[i] = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.05; 
         }
         beepBufferRef.current = buffer;
-        // console.log("AudioContext y Beep Buffer creados. Estado inicial del AudioContext:", context.state);
 
         if (context.state === 'suspended') {
-          // console.log("AudioContext está suspendido. Esperando interacción del usuario.");
           if (!userInteractedRef.current) setShowInteractionPrompt(true);
         } else {
           userInteractedRef.current = true;
           setShowInteractionPrompt(false); 
-          // console.log("AudioContext está activo (running).");
         }
       } catch (error) {
         console.error("Error inicializando AudioContext o Beep Buffer:", error);
@@ -63,13 +59,11 @@ export default function CallPatientPage() {
     }
 
     const handleFirstInteraction = async () => {
-      // console.log("handleFirstInteraction llamado.");
       if (audioContextRef.current && audioContextRef.current.state === 'suspended' && !userInteractedRef.current) {
         try {
           await audioContextRef.current.resume();
           userInteractedRef.current = true;
           setShowInteractionPrompt(false);
-          // console.log("AudioContext reanudado por interacción del usuario. Nuevo estado:", audioContextRef.current.state);
           toast({ title: "Audio Activado", description: "Los anuncios de voz y sonidos están activos.", duration: 3000 });
         } catch (e) {
           console.error("Error reanudando AudioContext en la interacción:", e);
@@ -82,20 +76,16 @@ export default function CallPatientPage() {
     
     const interactionTimeoutId = setTimeout(() => {
         if (audioContextRef.current?.state === 'suspended' && !userInteractedRef.current) {
-            // console.log("Añadiendo listeners para interacción del usuario.");
             window.addEventListener('click', handleFirstInteraction);
             window.addEventListener('touchstart', handleFirstInteraction);
             window.addEventListener('keydown', handleFirstInteraction);
         } else if (audioContextRef.current?.state === 'running') {
-             // console.log("AudioContext ya está 'running', no se necesitan listeners de interacción.");
              userInteractedRef.current = true;
              setShowInteractionPrompt(false);
         }
     }, 100);
 
-
     return () => {
-      // console.log("CallPatientPage: Limpiando useEffect de inicialización de audio.");
       clearTimeout(interactionTimeoutId);
       if (announcementTimeoutIdRef.current) {
         clearTimeout(announcementTimeoutIdRef.current);
@@ -110,36 +100,22 @@ export default function CallPatientPage() {
     };
   }, [toast]);
 
-
   const playNotificationSound = () => {
-    // console.log("Intentando reproducir sonido de notificación...");
-    if (!audioContextRef.current) {
-      // console.warn("playNotificationSound: AudioContext no está inicializado.");
-      return;
-    }
-    if (audioContextRef.current.state !== 'running') {
-      // console.warn(`playNotificationSound: AudioContext no está 'running'. Estado actual: ${audioContextRef.current.state}. Se requiere interacción del usuario.`);
+    if (!audioContextRef.current || audioContextRef.current.state !== 'running' || !beepBufferRef.current) {
       if (!userInteractedRef.current) setShowInteractionPrompt(true);
       return;
     }
-    if (!beepBufferRef.current) {
-      // console.warn("playNotificationSound: Beep Buffer no está cargado.");
-      return;
-    }
-
     try {
       const source = audioContextRef.current.createBufferSource();
       source.buffer = beepBufferRef.current;
       source.connect(audioContextRef.current.destination);
       source.start();
-      // console.log("Sonido de notificación reproducido.");
     } catch (error) {
       console.error("Error reproduciendo sonido de notificación:", error);
     }
   };
   
   useEffect(() => {
-    // console.log("CallPatientPage: useEffect para suscripción a Firestore ejecutándose.");
     const qCalled = query(
       collection(db, "turns"),
       or(
@@ -155,43 +131,26 @@ export default function CallPatientPage() {
       querySnapshot.forEach((doc) => {
         calledTurnsData.push({ id: doc.id, ...doc.data() } as Turn);
       });
-      // console.log('Firestore: Nuevos datos de turnos llamados recibidos. Cantidad:', calledTurnsData.length);
       
       if (calledTurnsData.length > 0) {
         const latestCalledTurn = calledTurnsData[0];
         const latestCalledTurnId = latestCalledTurn.id;
-
-        // console.log(`Firestore: Turno más reciente ID = ${latestCalledTurnId}, ID previo guardado = ${prevTopCalledTurnIdRef.current}`);
         
         if (latestCalledTurnId && latestCalledTurnId !== prevTopCalledTurnIdRef.current) {
-          // console.log("Nuevo turno detectado para anuncio:", latestCalledTurn);
           playNotificationSound();
-
           const patientDisplayName = getPatientDisplayName(latestCalledTurn.patientName, latestCalledTurn.patientId);
           const moduleName = latestCalledTurn.module || (latestCalledTurn.status === 'called_by_doctor' ? "Consultorio" : "Módulo");
-          
           let announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}.`;
-          
           if (latestCalledTurn.status === 'called_by_doctor' && latestCalledTurn.professionalDisplayName) {
             announcement = `Turno ${latestCalledTurn.turnNumber}, ${patientDisplayName}, diríjase a ${moduleName}. Será atendido por ${latestCalledTurn.professionalDisplayName}.`;
           }
-          
-          // console.log("Preparando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
-
-          if (announcementTimeoutIdRef.current) {
-            clearTimeout(announcementTimeoutIdRef.current);
-          }
-          
-          // console.log(`Antes de setTimeout para speakText. AudioContext State: ${audioContextRef.current?.state}, User Interacted: ${userInteractedRef.current}`);
+          if (announcementTimeoutIdRef.current) clearTimeout(announcementTimeoutIdRef.current);
           announcementTimeoutIdRef.current = setTimeout(() => {
-            // console.log("Dentro de setTimeout - Intentando anuncio de voz:", `"${announcement}"`, "AudioContext state:", audioContextRef.current?.state, "User interacted:", userInteractedRef.current);
             if (!userInteractedRef.current && audioContextRef.current?.state !== 'running'){
-                 console.warn("Anuncio de voz omitido: El contexto de audio principal no está activo. Se requiere interacción del usuario.");
                  if(!showInteractionPrompt) setShowInteractionPrompt(true);
                  return;
             }
-            speakText(announcement, 'es-CO') 
-              .then(() => { /*console.log("Anuncio de voz completado.")*/ })
+            speakText(announcement, 'es-CO')
               .catch(err => {
                 console.error("Error al pronunciar el anuncio:", err);
                 toast({ title: "Error de Anuncio de Voz", description: `No se pudo reproducir: ${err.message}`, variant: "destructive" });
@@ -200,10 +159,7 @@ export default function CallPatientPage() {
         }
          prevTopCalledTurnIdRef.current = latestCalledTurnId;
       } else {
-        // console.log("Firestore: No hay turnos llamados actualmente.");
-        if (prevTopCalledTurnIdRef.current) {
-          prevTopCalledTurnIdRef.current = null;
-        }
+        if (prevTopCalledTurnIdRef.current) prevTopCalledTurnIdRef.current = null;
       }
       setRecentlyCalledTurns(calledTurnsData);
       if (isLoading) setIsLoading(false);
@@ -227,7 +183,7 @@ export default function CallPatientPage() {
       where("status", "==", "pending"),
       orderBy("priority", "desc"),
       orderBy("requestedAt", "asc"),
-      limit(MAX_UPCOMING_TURNS)
+      limit(MAX_UPCOMING_TURNS_DISPLAY)
     );
     const unsubscribePending = onSnapshot(qPending, (querySnapshot) => {
       const turnsData: Turn[] = [];
@@ -240,14 +196,11 @@ export default function CallPatientPage() {
     });
     
     return () => {
-      // console.log("CallPatientPage: Limpiando suscripciones de Firestore.");
       unsubscribeCalled();
       unsubscribePending();
-      if (announcementTimeoutIdRef.current) {
-        clearTimeout(announcementTimeoutIdRef.current);
-      }
+      if (announcementTimeoutIdRef.current) clearTimeout(announcementTimeoutIdRef.current);
     };
-  }, [toast, isLoading]);
+  }, [toast, isLoading]); // isLoading dependency is important here
   
   const getTimeAgo = (date: Timestamp | Date | undefined) => {
     if (!date) return "";
@@ -256,9 +209,7 @@ export default function CallPatientPage() {
   };
 
   const getPatientDisplayName = (patientName?: string, patientId?: string) => {
-    if (patientName && patientName.trim() !== "") {
-      return patientName;
-    }
+    if (patientName && patientName.trim() !== "") return patientName;
     if (patientId) {
       const idParts = patientId.split(" ");
       const lastPart = idParts[idParts.length - 1];
@@ -271,7 +222,6 @@ export default function CallPatientPage() {
     return "Paciente";
   }
 
-
   if (isLoading && recentlyCalledTurns.length === 0) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-primary/10 via-background to-background">
@@ -282,9 +232,12 @@ export default function CallPatientPage() {
     );
   }
 
+  const mainCalledTurn = recentlyCalledTurns.length > 0 ? recentlyCalledTurns[0] : null;
+  const secondaryCalledTurns = recentlyCalledTurns.slice(1);
+
   return (
-    <main className="flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6">
-      <div className="w-full flex justify-center mb-6">
+    <main className="flex flex-col min-h-screen bg-gradient-to-br from-primary/5 via-background to-background items-center p-2 sm:p-4 md:p-6 lg:p-8">
+      <div className="w-full flex justify-center mb-4 lg:mb-8">
         <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={120} height={115} priority data-ai-hint="hospital logo"/>
       </div>
       {showInteractionPrompt && !userInteractedRef.current && (
@@ -293,107 +246,148 @@ export default function CallPatientPage() {
             <div className="flex items-center justify-center">
               <AlertTriangle className="h-8 w-8 text-yellow-600 mr-3" />
               <div>
-                <p className="font-semibold text-yellow-700">El audio está desactivado.</p>
-                <p className="text-sm text-yellow-600">Por favor, haz clic en cualquier parte de la página para activar los sonidos y anuncios de voz.</p>
+                <p className="font-semibold text-yellow-700 text-lg">El audio está desactivado.</p>
+                <p className="text-md text-yellow-600">Por favor, haz clic en cualquier parte de la página para activar los sonidos y anuncios de voz.</p>
               </div>
             </div>
           </CardContent>
         </Card>
       )}
-      <div className="w-full max-w-7xl">
-        <Card className="w-full shadow-2xl mb-6 bg-card/80 backdrop-blur-sm">
-          <CardHeader className="bg-primary/10 text-primary-foreground p-4 rounded-t-lg">
-             <div className="flex items-center justify-center gap-2">
-                <Volume2 className="h-8 w-8 text-primary" />
-                <CardTitle className="text-3xl sm:text-4xl font-bold text-center text-primary">
-                Turnos Llamados Recientemente
+      <div className="w-full max-w-screen-xl">
+        <Card className="w-full shadow-2xl mb-6 lg:mb-8 bg-card/80 backdrop-blur-sm">
+          <CardHeader className="bg-primary/10 text-primary-foreground p-4 lg:p-6 rounded-t-lg">
+             <div className="flex items-center justify-center gap-2 lg:gap-3">
+                <Volume2 className="h-8 w-8 lg:h-10 lg:w-10 text-primary" />
+                <CardTitle className="text-3xl sm:text-4xl lg:text-5xl font-bold text-center text-primary">
+                Turnos Llamados
                 </CardTitle>
             </div>
           </CardHeader>
-          <CardContent className="p-4">
-            {recentlyCalledTurns.length === 0 && !isLoading && (
-              <div className="text-center py-10">
-                <Megaphone className="mx-auto h-20 w-20 text-muted-foreground mb-4 opacity-50" />
-                <p className="text-2xl text-muted-foreground">Esperando llamadas...</p>
-                <p className="text-sm text-muted-foreground">Aún no se ha llamado a ningún paciente.</p>
+          <CardContent className="p-4 lg:p-6">
+            {!mainCalledTurn && !isLoading && (
+              <div className="text-center py-10 lg:py-20">
+                <Megaphone className="mx-auto h-20 w-20 lg:h-28 lg:w-28 text-muted-foreground mb-4 opacity-50" />
+                <p className="text-2xl lg:text-3xl text-muted-foreground">Esperando llamadas...</p>
+                <p className="text-sm lg:text-base text-muted-foreground">Aún no se ha llamado a ningún paciente.</p>
               </div>
             )}
-            <div className={`grid grid-cols-1 ${recentlyCalledTurns.length > 1 ? 'md:grid-cols-2' : ''} ${recentlyCalledTurns.length > 0 ? 'xl:grid-cols-2' : ''} gap-4`}>
-              {recentlyCalledTurns.map((turn, index) => (
+            {mainCalledTurn && (
                 <Card
-                  key={turn.id}
-                  className={`shadow-xl transform transition-all duration-500 ease-out
-                              ${index === 0 ? 'border-2 border-accent bg-accent/10 scale-100' : 'bg-card opacity-90 hover:opacity-100 scale-95 hover:scale-[0.97]'}
-                              animate-fadeIn`}
-                  style={{ animationDelay: `${index * 100}ms` }}
+                  key={mainCalledTurn.id}
+                  className="shadow-xl transform transition-all duration-500 ease-out border-2 border-accent bg-accent/10 scale-100 animate-fadeIn mb-4 lg:mb-6"
                 >
-                  <CardHeader className={`p-4 rounded-t-md ${index === 0 ? 'bg-accent/20' : 'bg-primary/10'}`}>
+                  <CardHeader className="p-4 sm:p-6 rounded-t-md bg-accent/20">
                     <div className="flex items-center justify-between">
-                      <CardTitle className={`text-4xl sm:text-5xl font-bold ${index === 0 ? 'text-accent-foreground' : 'text-primary'}`}>{turn.turnNumber}</CardTitle>
-                      {turn.status === 'called_by_doctor' ? (
-                        <Stethoscope className={`h-10 w-10 sm:h-12 sm:w-12 ${index === 0 ? 'text-accent-foreground animate-pulse' : 'text-primary/80'}`} />
+                      <CardTitle className="text-5xl sm:text-6xl lg:text-7xl font-bold text-accent-foreground">{mainCalledTurn.turnNumber}</CardTitle>
+                      {mainCalledTurn.status === 'called_by_doctor' ? (
+                        <Stethoscope className="h-12 w-12 sm:h-14 sm:w-14 lg:h-16 lg:w-16 text-accent-foreground animate-pulse" />
                       ) : (
-                        <Megaphone className={`h-10 w-10 sm:h-12 sm:w-12 ${index === 0 ? 'text-accent-foreground animate-pulse' : 'text-primary/80'}`} />
+                        <Megaphone className="h-12 w-12 sm:h-14 sm:w-14 lg:h-16 lg:w-16 text-accent-foreground animate-pulse" />
                       )}
                     </div>
                   </CardHeader>
-                  <CardContent className="p-4 text-center">
-                     <p className={`text-xl sm:text-2xl font-semibold mb-1 truncate ${index === 0 ? 'text-accent-foreground' : 'text-foreground'}`}>
-                        {getPatientDisplayName(turn.patientName, turn.patientId)}
+                  <CardContent className="p-4 sm:p-6 text-center">
+                     <p className="text-2xl sm:text-3xl lg:text-4xl font-semibold mb-1 truncate text-accent-foreground">
+                        {getPatientDisplayName(mainCalledTurn.patientName, mainCalledTurn.patientId)}
                     </p>
-                     <p className={`text-lg sm:text-xl ${index === 0 ? 'text-accent-foreground/90' : 'text-muted-foreground'}`}>
-                      {turn.module || (turn.status === 'called_by_doctor' ? "Consultorio Médico" : "Ventanilla")}
+                     <p className="text-xl sm:text-2xl lg:text-3xl text-accent-foreground/90">
+                      {mainCalledTurn.module || (mainCalledTurn.status === 'called_by_doctor' ? "Consultorio Médico" : "Ventanilla")}
                     </p>
-                    <p className={`text-md sm:text-base ${index === 0 ? 'text-accent-foreground/80' : 'text-muted-foreground'}`}>
-                      Servicio: {turn.service}
+                    <p className="text-lg sm:text-xl lg:text-2xl text-accent-foreground/80">
+                      Servicio: {mainCalledTurn.service}
                     </p>
-                    {turn.status === 'called_by_doctor' && turn.professionalDisplayName && (
-                      <p className={`text-sm sm:text-base mt-1 ${index === 0 ? 'text-accent-foreground/80 font-medium' : 'text-muted-foreground/90'}`}>
-                        Atiende: {turn.professionalDisplayName}
+                    {mainCalledTurn.status === 'called_by_doctor' && mainCalledTurn.professionalDisplayName && (
+                      <p className="text-md sm:text-lg lg:text-xl mt-1 text-accent-foreground/80 font-medium">
+                        Atiende: {mainCalledTurn.professionalDisplayName}
                       </p>
                     )}
-                    {turn.calledAt && (
-                       <p className={`text-xs mt-2 ${index === 0 ? 'text-accent-foreground/70' : 'text-muted-foreground/70'}`}>
-                        Llamado {getTimeAgo(turn.calledAt)}
+                    {mainCalledTurn.calledAt && (
+                       <p className="text-sm sm:text-base mt-2 text-accent-foreground/70">
+                        Llamado {getTimeAgo(mainCalledTurn.calledAt)}
                       </p>
                     )}
                   </CardContent>
                 </Card>
-              ))}
-            </div>
+            )}
+            {secondaryCalledTurns.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
+                {secondaryCalledTurns.map((turn) => (
+                  <Card
+                    key={turn.id}
+                    className="shadow-lg bg-card opacity-90 hover:opacity-100 scale-95 hover:scale-[0.97] animate-fadeIn"
+                  >
+                    <CardHeader className="p-3 sm:p-4 rounded-t-md bg-primary/10">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-3xl sm:text-4xl font-bold text-primary">{turn.turnNumber}</CardTitle>
+                         {turn.status === 'called_by_doctor' ? (
+                          <Stethoscope className="h-8 w-8 sm:h-10 sm:w-10 text-primary/80" />
+                        ) : (
+                          <Megaphone className="h-8 w-8 sm:h-10 sm:w-10 text-primary/80" />
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-3 sm:p-4 text-center">
+                      <p className="text-lg sm:text-xl font-semibold mb-1 truncate text-foreground">
+                          {getPatientDisplayName(turn.patientName, turn.patientId)}
+                      </p>
+                      <p className="text-md sm:text-lg text-muted-foreground">
+                        {turn.module || (turn.status === 'called_by_doctor' ? "Consultorio" : "Ventanilla")}
+                      </p>
+                       <p className="text-sm text-muted-foreground/80">
+                        Servicio: {turn.service}
+                      </p>
+                       {turn.status === 'called_by_doctor' && turn.professionalDisplayName && (
+                        <p className="text-xs sm:text-sm mt-0.5 text-muted-foreground/80 font-medium">
+                          Atiende: {turn.professionalDisplayName}
+                        </p>
+                      )}
+                      {turn.calledAt && (
+                        <p className="text-xs mt-1.5 text-muted-foreground/70">
+                          Llamado {getTimeAgo(turn.calledAt)}
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        <Card className="w-full shadow-xl bg-card/80 backdrop-blur-sm mb-6">
-          <CardHeader className="bg-secondary/20 p-4 rounded-t-lg">
-            <CardTitle className="text-2xl sm:text-3xl font-semibold text-secondary-foreground flex items-center">
-              <Users className="mr-3 h-7 w-7" /> Próximos Turnos (Ventanilla/Recepción)
+        <Card className="w-full shadow-xl bg-card/80 backdrop-blur-sm">
+          <CardHeader className="bg-secondary/20 p-4 lg:p-6 rounded-t-lg">
+            <CardTitle className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-secondary-foreground flex items-center">
+              <Users className="mr-3 h-7 w-7 lg:h-9 lg:w-9" /> Próximos Turnos (Ventanilla)
             </CardTitle>
-            <CardDescription className="text-muted-foreground">Estos son los siguientes pacientes en espera para servicios generales.</CardDescription>
+             <CardDescription className="text-muted-foreground text-sm lg:text-base">Siguientes pacientes en espera para servicios generales.</CardDescription>
           </CardHeader>
-          <CardContent className="p-4">
+          <CardContent className="p-4 lg:p-6">
             {upcomingTurns.length > 0 ? (
-              <ul className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
                 {upcomingTurns.map((turn) => (
-                  <li key={turn.id} className="p-3 bg-secondary/30 rounded-lg shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center hover:bg-secondary/50 transition-colors">
-                    <div className="flex items-center mb-1 sm:mb-0">
-                      <span className={`text-lg sm:text-xl font-medium ${turn.priority ? 'text-destructive' : 'text-secondary-foreground'}`}>{turn.turnNumber}</span>
-                       {turn.priority && <span className="ml-2 text-xs bg-destructive/80 text-destructive-foreground px-2 py-0.5 rounded-full">Prioritario</span>}
+                  <Card key={turn.id} className={`p-4 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-150 ${turn.priority ? 'bg-destructive/10 border-l-4 border-destructive' : 'bg-secondary/30'}`}>
+                    <div className="flex justify-between items-start mb-1">
+                      <span className={`text-2xl lg:text-3xl font-bold ${turn.priority ? 'text-destructive' : 'text-secondary-foreground'}`}>{turn.turnNumber}</span>
+                       {turn.priority && <span className="text-xs bg-destructive text-destructive-foreground px-2 py-1 rounded-full font-semibold">PRIORITARIO</span>}
                     </div>
-                    <div className="text-sm text-muted-foreground mb-1 sm:mb-0 sm:mx-2 flex-grow text-left sm:text-center truncate">
-                        {getPatientDisplayName(turn.patientName, turn.patientId)} ({turn.service})
+                    <p className="text-lg lg:text-xl font-medium text-foreground truncate" title={getPatientDisplayName(turn.patientName, turn.patientId)}>
+                        {getPatientDisplayName(turn.patientName, turn.patientId)}
+                    </p>
+                    <p className="text-md lg:text-lg text-muted-foreground mb-2">{turn.service}</p>
+                    <div className="flex items-center text-xs lg:text-sm text-muted-foreground/80">
+                        <CalendarClock className="inline h-4 w-4 mr-1.5"/> 
+                        Solicitado {getTimeAgo(turn.requestedAt)}
                     </div>
-                    <span className="text-xs text-muted-foreground/80 self-start sm:self-center whitespace-nowrap"><CalendarClock className="inline h-3 w-3 mr-1"/> {getTimeAgo(turn.requestedAt)}</span>
-                  </li>
+                  </Card>
                 ))}
-              </ul>
+              </div>
             ) : (
-              <p className="text-center text-muted-foreground py-6">No hay más turnos en espera para servicios generales por el momento.</p>
+              <p className="text-center text-muted-foreground py-6 lg:py-10 text-lg lg:text-xl">No hay más turnos en espera para servicios generales.</p>
             )}
           </CardContent>
         </Card>
       </div>
-       <footer className="mt-8 text-center text-xs text-muted-foreground/80 w-full">
+       <footer className="mt-8 lg:mt-12 text-center text-xs text-muted-foreground/80 w-full">
         <p>&copy; {new Date().getFullYear()} TurnoFacil. Todos los derechos reservados.</p>
         <p>Una solución innovadora para la gestión de filas.</p>
       </footer>
@@ -415,3 +409,4 @@ export default function CallPatientPage() {
   );
 }
 
+  
