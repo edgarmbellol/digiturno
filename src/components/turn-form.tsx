@@ -22,8 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckCircle2, PartyPopper, UserCheck, ChevronRight, Loader2, UserPlus, Accessibility, Settings, Ticket, PersonStanding, Baby, HeartHandshake } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -39,34 +39,18 @@ import { AVAILABLE_SERVICES as DEFAULT_SERVICES_STATIC_FALLBACK } from "@/lib/se
 
 const SERVICE_CONFIG_COLLECTION = "service_configurations";
 
-const specialConditions: { name: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">; label: string; icon: LucideIcon }[] = [
-  { name: "isSenior", label: "Adulto Mayor (60+)", icon: PersonStanding },
-  { name: "isPregnant", label: "Gestante", icon: Baby },
-  { name: "isDisabled", label: "Discapacidad", icon: Accessibility },
-  { name: "isNone", label: "Ninguna Condición", icon: HeartHandshake },
+const specialConditions: { value: string; label: string; icon: LucideIcon }[] = [
+  { value: "senior", label: "Adulto Mayor (60+)", icon: PersonStanding },
+  { value: "pregnant", label: "Gestante", icon: Baby },
+  { value: "disabled", label: "Discapacidad", icon: Accessibility },
+  { value: "none", label: "Ninguna Condición", icon: HeartHandshake },
 ];
 
 const formSchema = z.object({
   service: z.string({ required_error: "Por favor seleccione un servicio." }).min(1, "Por favor seleccione un servicio."),
   idNumber: z.string().min(3, "El número de identificación es requerido.").regex(/^[0-9a-zA-Z]+$/, "Solo se permiten números y letras."),
   patientName: z.string().min(3, "El nombre del paciente es requerido.").max(100, "El nombre es demasiado largo."),
-  isSenior: z.boolean().default(false),
-  isPregnant: z.boolean().default(false),
-  isDisabled: z.boolean().default(false),
-  isNone: z.boolean().default(true),
-}).refine(data => {
-    const { isNone, isSenior, isPregnant, isDisabled } = data;
-    const priorityConditions = [isSenior, isPregnant, isDisabled];
-    const selectedPriorityCount = priorityConditions.filter(Boolean).length;
-
-    if (isNone) {
-        return selectedPriorityCount === 0; // Si "Ninguna" está marcada, ninguna otra puede estarlo.
-    } else {
-        return selectedPriorityCount >= 1; // Si "Ninguna" no está marcada, al menos una prioritaria debe estarlo.
-    }
-}, {
-    message: "Seleccione 'Ninguna Condición' o al menos una condición prioritaria. No pueden estar ambas seleccionadas, ni ninguna opción desmarcada.",
-    path: ["isNone"], 
+  specialCondition: z.string({ required_error: "Por favor seleccione una condición."}),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -136,55 +120,11 @@ export default function TurnForm() {
       service: "",
       idNumber: "",
       patientName: "",
-      isSenior: false,
-      isPregnant: false,
-      isDisabled: false,
-      isNone: true,
+      specialCondition: "none",
     },
   });
 
   const { reset, control, setValue, getValues, trigger } = form;
-
-  const handleDependentSpecialConditions = (
-    changedFieldName: keyof Pick<FormValues, "isSenior" | "isPregnant" | "isDisabled" | "isNone">,
-    isChecked: boolean // El nuevo estado del checkbox que se acaba de cambiar
-  ) => {
-    // No es necesario llamar a getValues() aquí si la lógica depende del campo que acaba de cambiar.
-    // Los valores para los *otros* campos se pueden obtener de getValues si es necesario,
-    // pero es crucial que el estado de 'changedFieldName' ya esté actualizado por field.onChange.
-    
-    if (changedFieldName === 'isNone') {
-      if (isChecked) { // Si "Ninguna" se acaba de marcar
-        // Desmarcar todas las prioritarias
-        setValue('isSenior', false, { shouldValidate: false, shouldDirty: true });
-        setValue('isPregnant', false, { shouldValidate: false, shouldDirty: true });
-        setValue('isDisabled', false, { shouldValidate: false, shouldDirty: true });
-      }
-    } else { // Si una condición prioritaria (isSenior, isPregnant, isDisabled) se acaba de cambiar
-      if (isChecked) { // Si una prioritaria se acaba de marcar
-        // Desmarcar "Ninguna"
-        setValue('isNone', false, { shouldValidate: false, shouldDirty: true });
-      } else { // Si una prioritaria se acaba de desmarcar
-        // Comprobar si todas las demás prioritarias también están desmarcadas
-        const currentValues = getValues(); // Obtener valores actuales para tomar la decisión
-        const allPrioritiesNowUnchecked = 
-          !currentValues.isSenior && 
-          !currentValues.isPregnant && 
-          !currentValues.isDisabled;
-
-        if (allPrioritiesNowUnchecked) {
-          // Si todas las prioritarias están ahora desmarcadas (incluyendo la que se acaba de desmarcar),
-          // marcar "Ninguna"
-          setValue('isNone', true, { shouldValidate: false, shouldDirty: true });
-        }
-      }
-    }
-    // Disparar la validación global del formulario al final, después de todos los cambios de `setValue`
-    // Esto es importante para que Zod refine() tenga la última información.
-    // Retrasar ligeramente el trigger puede ayudar si hay problemas de sincronización con los updates.
-    setTimeout(() => trigger(), 0);
-  };
-
 
   const fetchPatientNameById = async (idDocument: string) => {
     if (!idDocument.trim() || idDocument.trim().length < 3) {
@@ -271,7 +211,7 @@ export default function TurnForm() {
       return;
     }
 
-    const priority = data.isSenior || data.isPregnant || data.isDisabled;
+    const priority = data.specialCondition !== "none";
 
     try {
       const turnSuffix = await generateTurnSuffix();
@@ -285,6 +225,7 @@ export default function TurnForm() {
         priority: priority,
         status: 'pending',
         requestedAt: serverTimestamp(),
+        // No incluir 'module' al crear el turno
       };
 
       await addDoc(collection(db, "turns"), newTurnData);
@@ -312,10 +253,7 @@ export default function TurnForm() {
         service: "",
         idNumber: "",
         patientName: "",
-        isSenior: false,
-        isPregnant: false,
-        isDisabled: false,
-        isNone: true,
+        specialCondition: "none",
     });
   }
 
@@ -324,36 +262,36 @@ export default function TurnForm() {
       <Card className="w-full max-w-lg shadow-xl transform transition-all duration-300">
         <CardHeader className="text-center bg-primary text-primary-foreground p-6 rounded-t-lg">
           <div className="flex flex-col items-center mb-3">
-            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={70} height={66} priority data-ai-hint="hospital logo" />
+            <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} priority data-ai-hint="hospital logo" />
           </div>
           <div className="mx-auto bg-background/20 text-primary-foreground p-2 rounded-full w-fit mb-2">
-            <PartyPopper className="h-10 w-10" />
+            <PartyPopper className="h-12 w-12" />
           </div>
-          <CardTitle className="text-2xl font-bold">¡Turno Registrado!</CardTitle>
-          <CardDescription className="text-primary-foreground/80 text-lg mt-1">
+          <CardTitle className="text-3xl font-bold">¡Turno Registrado!</CardTitle>
+          <CardDescription className="text-primary-foreground/80 text-xl mt-1">
             Su turno <span className="font-semibold">{submittedTurnNumber}</span> ha sido procesado.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3 text-lg p-5">
-          <div className="flex justify-between border-b pb-1.5">
+        <CardContent className="space-y-3 text-xl p-6">
+          <div className="flex justify-between border-b pb-2">
             <span className="font-medium text-muted-foreground">Paciente:</span>
             <span className="font-semibold text-foreground text-right">{submittedPatientName}</span>
           </div>
-          <div className="flex justify-between border-b pb-1.5">
+          <div className="flex justify-between border-b pb-2">
             <span className="font-medium text-muted-foreground">Identificación:</span>
             <span className="font-semibold text-foreground">CC {submittedIdNumber}</span>
           </div>
-          <div className="flex justify-between border-b pb-1.5">
+          <div className="flex justify-between border-b pb-2">
             <span className="font-medium text-muted-foreground">Servicio:</span>
             <span className="font-semibold text-foreground text-right">{submittedServiceLabel}</span>
           </div>
-           <p className="text-center text-muted-foreground pt-3 text-base">
+           <p className="text-center text-muted-foreground pt-4 text-lg">
              Por favor, esté atento a la pantalla. Pronto será llamado.
            </p>
         </CardContent>
-        <CardFooter className="p-4">
-          <Button onClick={handleNewTurn} className="w-full bg-accent text-accent-foreground hover:bg-accent/90 text-lg py-2.5 h-11">
-            <ChevronRight className="mr-2 h-6 w-6 transform rotate-180" />
+        <CardFooter className="p-5">
+          <Button onClick={handleNewTurn} className="w-full bg-accent text-accent-foreground hover:bg-accent/90 text-xl py-3 h-14">
+            <ChevronRight className="mr-2 h-7 w-7 transform rotate-180" />
             Solicitar Nuevo Turno
           </Button>
         </CardFooter>
@@ -364,21 +302,21 @@ export default function TurnForm() {
 
   return (
     <Card className="w-full max-w-3xl shadow-2xl overflow-hidden">
-      <CardHeader className="bg-primary text-primary-foreground p-4 md:p-5 rounded-t-lg text-center">
+      <CardHeader className="bg-primary text-primary-foreground p-5 rounded-t-lg text-center">
         <div className="flex flex-col items-center mb-2">
-          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={70} height={66} priority data-ai-hint="hospital logo" />
+          <Image src="/logo-hospital.png" alt="Logo Hospital Divino Salvador de Sopó" width={80} height={76} priority data-ai-hint="hospital logo" />
         </div>
         <div className="flex items-center justify-center gap-2">
-            <Ticket className="h-8 w-8 md:h-10 md:w-10" />
-            <CardTitle className="text-2xl md:text-3xl font-bold">Solicitar Turno</CardTitle>
+            <Ticket className="h-10 w-10" />
+            <CardTitle className="text-3xl font-bold">Solicitar Turno</CardTitle>
         </div>
-        <CardDescription className="text-primary-foreground/90 pt-1 text-base md:text-lg">
-          Complete los datos para obtener su turno.
+        <CardDescription className="text-primary-foreground/90 pt-1 text-lg">
+          Complete los datos para obtener su turno. Es fácil y rápido.
         </CardDescription>
       </CardHeader>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
-          <CardContent className="p-4 md:p-6">
+          <CardContent className="p-5 md:p-6">
             <div className="grid md:grid-cols-2 md:gap-x-8 gap-y-6">
 
               {/* Columna Izquierda: Datos del Paciente */}
@@ -388,8 +326,8 @@ export default function TurnForm() {
                   name="idNumber"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1.5">
-                        <UserCheck className="h-7 w-7 text-primary" />
+                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2.5 mb-1.5">
+                        <UserCheck className="h-8 w-8 text-primary" />
                         1. Su Identificación
                       </FormLabel>
                       <FormControl>
@@ -397,16 +335,16 @@ export default function TurnForm() {
                           <Input
                             placeholder="Número de cédula"
                             {...field}
-                            className="text-xl h-12"
+                            className="text-2xl h-14"
                             onBlur={(e) => {
                               field.onBlur();
                               fetchPatientNameById(e.target.value);
                             }}
                           />
-                          {isFetchingPatientName && <Loader2 className="h-7 w-7 animate-spin text-primary" />}
+                          {isFetchingPatientName && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
                         </div>
                       </FormControl>
-                      <FormMessage className="text-base"/>
+                      <FormMessage className="text-lg"/>
                     </FormItem>
                   )}
                 />
@@ -415,24 +353,24 @@ export default function TurnForm() {
                   name="patientName"
                   render={({ field }) => (
                     <FormItem className={(showManualNameInput || getValues("patientName")) ? "block" : "hidden"}>
-                      <FormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1.5">
-                         <UserPlus className="h-7 w-7 text-primary" />
+                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2.5 mb-1.5">
+                         <UserPlus className="h-8 w-8 text-primary" />
                         2. Su Nombre Completo
                       </FormLabel>
                       <FormControl>
                          <Input
                             placeholder="Nombre como aparece en la cédula"
                             {...field}
-                            className="text-xl h-12"
+                            className="text-2xl h-14"
                             disabled={isFetchingPatientName || (!showManualNameInput && !!getValues("patientName") && !form.formState.errors.patientName)}
                           />
                       </FormControl>
                        {showManualNameInput && !isFetchingPatientName && (
-                        <p className="text-base text-muted-foreground mt-1">
+                        <p className="text-lg text-muted-foreground mt-1">
                           No pudimos encontrar su nombre, por favor ingréselo.
                         </p>
                       )}
-                      <FormMessage className="text-base"/>
+                      <FormMessage className="text-lg"/>
                     </FormItem>
                   )}
                 />
@@ -445,14 +383,14 @@ export default function TurnForm() {
                   name="service"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-lg font-semibold text-foreground flex items-center gap-2 mb-1.5">
-                        <Settings className="h-7 w-7 text-primary" />
+                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2.5 mb-1.5">
+                        <Settings className="h-8 w-8 text-primary" />
                         3. ¿Qué Servicio Necesita?
                       </FormLabel>
                        {isLoadingServiceConfig ? (
-                         <div className="flex items-center text-base text-muted-foreground pt-2"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Cargando servicios...</div>
+                         <div className="flex items-center text-lg text-muted-foreground pt-2"><Loader2 className="mr-2 h-6 w-6 animate-spin" />Cargando servicios...</div>
                        ) : availableServices.length === 0 ? (
-                         <p className="text-base text-destructive pt-2">No hay servicios disponibles. Contacte al administrador.</p>
+                         <p className="text-lg text-destructive pt-2">No hay servicios disponibles. Contacte al administrador.</p>
                        ) : (
                         <Select
                           key={selectKey}
@@ -461,7 +399,7 @@ export default function TurnForm() {
                           disabled={availableServices.length === 0}
                         >
                             <FormControl>
-                            <SelectTrigger className="text-xl h-12">
+                            <SelectTrigger className="text-2xl h-14">
                                 <SelectValue
                                 placeholder={
                                     <span className="text-muted-foreground">
@@ -473,9 +411,9 @@ export default function TurnForm() {
                             </FormControl>
                             <SelectContent>
                             {availableServices.map((service) => (
-                                <SelectItem key={service.id} value={service.id} className="text-lg py-2.5">
-                                <div className="flex items-center gap-2.5">
-                                    <service.icon className="h-6 w-6 text-muted-foreground" />
+                                <SelectItem key={service.id} value={service.id} className="text-xl py-3">
+                                <div className="flex items-center gap-3">
+                                    <service.icon className="h-7 w-7 text-muted-foreground" />
                                     {service.label}
                                 </div>
                                 </SelectItem>
@@ -483,65 +421,62 @@ export default function TurnForm() {
                             </SelectContent>
                         </Select>
                        )}
-                      <FormMessage className="text-base"/>
+                      <FormMessage className="text-lg"/>
                     </FormItem>
                   )}
                 />
-                <div className="space-y-2">
-                    <FormLabel className="text-lg font-semibold text-foreground mb-2 block flex items-center gap-2">
-                        <Accessibility className="h-7 w-7 text-primary" />
+                <FormField
+                  control={control}
+                  name="specialCondition"
+                  render={({ field }) => (
+                    <FormItem className="space-y-3">
+                      <FormLabel className="text-xl font-semibold text-foreground flex items-center gap-2.5 mb-2">
+                        <Accessibility className="h-8 w-8 text-primary" />
                         4. ¿Alguna Condición Especial?
-                    </FormLabel>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {specialConditions.map((item) => (
-                        <FormField
-                            key={item.name}
-                            control={control}
-                            name={item.name}
-                            render={({ field }) => (
-                            <FormItem
-                                className={cn(
-                                "flex flex-row items-center space-x-3 space-y-0 rounded-lg border-2 p-3.5 shadow-sm transition-all hover:shadow-md cursor-pointer",
-                                field.value ? "border-primary bg-primary/10 ring-2 ring-primary/30" : "border-input hover:bg-secondary/50"
-                                )}
+                      </FormLabel>
+                      <FormControl>
+                        <RadioGroup
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                          className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+                        >
+                          {specialConditions.map((item) => (
+                            <FormItem 
+                              key={item.value}
+                              className={cn(
+                                "flex flex-col items-center justify-center space-x-0 space-y-2 rounded-xl border-2 p-4 shadow-sm transition-all hover:shadow-md cursor-pointer min-h-[100px]",
+                                field.value === item.value ? "border-primary bg-primary/10 ring-2 ring-primary/30" : "border-input hover:bg-secondary/50"
+                              )}
                             >
-                                <FormControl>
-                                <Checkbox
-                                    checked={field.value}
-                                    onCheckedChange={(checked) => {
-                                      const newCheckedState = !!checked;
-                                      field.onChange(newCheckedState);
-                                      handleDependentSpecialConditions(item.name, newCheckedState);
-                                    }}
-                                    id={field.name}
-                                    className="h-6 w-6"
-                                />
-                                </FormControl>
-                                <FormLabel
-                                htmlFor={field.name}
+                              <FormLabel
+                                htmlFor={`${field.name}-${item.value}`}
                                 className={cn(
-                                    "font-semibold text-base cursor-pointer flex items-center gap-2.5 w-full",
-                                    field.value ? "text-primary" : "text-foreground/90"
+                                    "font-semibold text-lg cursor-pointer flex flex-col items-center justify-center gap-2 text-center w-full h-full",
+                                    field.value === item.value ? "text-primary" : "text-foreground/90"
                                 )}
-                                >
-                                <item.icon className={cn("h-8 w-8", field.value ? "text-primary" : "text-primary/80")} />
-                                {item.label}
-                                </FormLabel>
+                              >
+                                <item.icon className={cn("h-10 w-10 mb-1", field.value === item.value ? "text-primary" : "text-primary/80")} />
+                                <span className="leading-tight">{item.label}</span>
+                                <FormControl className="sr-only">
+                                  <RadioGroupItem value={item.value} id={`${field.name}-${item.value}`} />
+                                </FormControl>
+                              </FormLabel>
                             </FormItem>
-                            )}
-                        />
-                    ))}
-                    </div>
-                    <FormMessage className="pt-1 text-base">{form.formState.errors.isNone?.message}</FormMessage>
-                </div>
+                          ))}
+                        </RadioGroup>
+                      </FormControl>
+                      <FormMessage className="pt-1 text-lg" />
+                    </FormItem>
+                  )}
+                />
               </div>
             </div>
           </CardContent>
-          <CardFooter className="p-4 md:p-6 border-t mt-4 md:mt-6">
-            <Button type="submit" className="w-full text-xl py-3 bg-accent text-accent-foreground hover:bg-accent/90 h-14" disabled={isSubmitting || isFetchingPatientName || isLoadingServiceConfig || availableServices.length === 0}>
+          <CardFooter className="p-5 md:p-6 border-t mt-4 md:mt-6">
+            <Button type="submit" className="w-full text-2xl py-3 bg-accent text-accent-foreground hover:bg-accent/90 h-16" disabled={isSubmitting || isFetchingPatientName || isLoadingServiceConfig || availableServices.length === 0}>
               {isSubmitting ? "Registrando..." : (isFetchingPatientName ? "Verificando..." : (isLoadingServiceConfig ? "Cargando..." : "Confirmar y Solicitar Turno"))}
-              {!isSubmitting && !isFetchingPatientName && !isLoadingServiceConfig && <CheckCircle2 className="ml-2.5 h-7 w-7" />}
-              {(isFetchingPatientName || isLoadingServiceConfig || isSubmitting) && <Loader2 className="ml-2.5 h-7 w-7 animate-spin" />}
+              {!isSubmitting && !isFetchingPatientName && !isLoadingServiceConfig && <CheckCircle2 className="ml-3 h-8 w-8" />}
+              {(isFetchingPatientName || isLoadingServiceConfig || isSubmitting) && <Loader2 className="ml-3 h-8 w-8 animate-spin" />}
             </Button>
           </CardFooter>
         </form>
@@ -549,6 +484,4 @@ export default function TurnForm() {
     </Card>
   );
 }
-    
-
     
